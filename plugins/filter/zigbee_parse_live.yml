@@ -1,0 +1,56 @@
+# Copyright: (c) 2026, Richard Lynch
+# GNU General Public License v3.0+ (see https://www.gnu.org/licenses/gpl-3.0.txt)
+---
+DOCUMENTATION:
+  name: zigbee_parse_live
+  short_description: Normalise a device's live Zigbee binding table
+  author: Richard Lynch (@Richard-Lynch)
+  description:
+    - Turns a zha_toolkit C(binds_get) result into normalised bindings.
+    - Raises when the table could not be read, so an unreadable table never reads as an empty one;
+      a present but empty table returns an empty list.
+  options:
+    _live:
+      description:
+        - 'A zha_toolkit C(binds_get) result: its event data, or Home Assistant''s C(service_response)
+          wrapper around it.'
+        - An unreadable table raises; it is never treated as an empty one.
+      type: dict
+      required: true
+    source_ieee:
+      description: The IEEE of the device whose table was read, when the payload does not carry it.
+      type: str
+EXAMPLES: |
+  - name: Normalise a binding table read with zha_toolkit binds_get
+    ansible.builtin.debug:
+      msg: "{{ binds_get_result | richard_lynch.home.zigbee_parse_live('00:11:22:33:44:55:66:77') }}"
+RETURN:
+  _value:
+    description: One normalised binding per table row.
+    type: list
+    elements: dict
+    contains:
+      src:
+        description: Source device IEEE (colon-separated lowercase).
+        type: str
+      src_ep:
+        description: Source endpoint.
+        type: int
+      cluster:
+        description: Cluster id.
+        type: int
+      cluster_name:
+        description: Cluster name, for example C(genOnOff).
+        type: str
+      dst_ieee:
+        description: Target device IEEE, or null for a group binding.
+        type: str
+      dst_ep:
+        description: Target endpoint, or null for a group binding.
+        type: int
+      group:
+        description: Target group id, or null for a device binding.
+        type: int
+      describe:
+        description: One-line description, C(src:ep --cluster--> target).
+        type: str

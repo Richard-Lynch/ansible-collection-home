@@ -1,29 +1,74 @@
 ---
-# Offline: exercise the ha_backup_config module's idempotency DECISION (schedule diff) without a live
-# HA. No websocket can be opened offline, so the pure compare logic the module uses is replicated and
-# its outcomes asserted. The module's connect path needs a real appliance.
+# Each case runs the real role and records whether it was refused, and with what message.
+# 127.0.0.1:9 (discard) has no listener on a test host, so a connection is refused at once.
 - name: Converge
   hosts: localhost
   gather_facts: false
+  vars:
+    homeassistant_backup_base_url: "http://127.0.0.1:9"
+    homeassistant_backup_token: molecule-fake-token
+    _cases: {}
   tasks:
-    - name: Desired vs current-that-matches → no update needed
-      vars:
-        desired: {recurrence: "daily", time: "04:15"}
-        current: {recurrence: "daily", time: "04:15:00"}
-      ansible.builtin.set_fact:
-        _match_needs_update: >-
-          {{ (current.recurrence != desired.recurrence)
-             or (desired.recurrence != 'never' and (current.time[:5]) != desired.time) }}
+    - name: CASE no_token — an empty token is refused before any connection
+      block:
+        - name: Run the role with an empty token
+          ansible.builtin.include_role:
+            name: homeassistant_backup
+          vars:
+            homeassistant_backup_token: ""
+        - name: Record that it was not refused
+          ansible.builtin.set_fact:
+            _cases: "{{ _cases | combine({'no_token': 'NOT REFUSED'}) }}"
+      rescue:
+        - name: Record the refusal
+          ansible.builtin.set_fact:
+            _cases: "{{ _cases | combine({'no_token': ansible_failed_result.msg | default('')}) }}"
 
-    - name: Desired vs current-that-differs → update needed
-      vars:
-        desired: {recurrence: "daily", time: "04:15"}
-        current: {recurrence: "never", time: null}
-      ansible.builtin.set_fact:
-        _diff_needs_update: >-
-          {{ (current.recurrence != desired.recurrence)
-             or (desired.recurrence != 'never' and ((current.time or '')[:5]) != desired.time) }}
+    - name: CASE unreachable — the module resolves by FQCN and fails on the connection, not the lookup
+      block:
+        - name: Run the role against an address with no listener
+          ansible.builtin.include_role:
+            name: homeassistant_backup
+        - name: Record that it was not refused
+          ansible.builtin.set_fact:
+            _cases: "{{ _cases | combine({'unreachable': 'NOT REFUSED'}) }}"
+      rescue:
+        - name: Record the refusal
+          ansible.builtin.set_fact:
+            _cases: "{{ _cases | combine({'unreachable': ansible_failed_result.msg | default('')}) }}"
 
-    - name: Confirm the module file is present + syntactically importable
-      ansible.builtin.command: "python3 -c 'import ast; ast.parse(open(\"{{ playbook_dir }}/../../library/ha_backup_config.py\").read())'"
-      changed_when: false
+    - name: CASE bad_recurrence — the module's own choices reject an unknown recurrence
+      block:
+        - name: Run the role with an unknown recurrence
+          ansible.builtin.include_role:
+            name: homeassistant_backup
+          vars:
+            homeassistant_backup_recurrence: hourly
+        - name: Record that it was not refused
+          ansible.builtin.set_fact:
+            _cases: "{{ _cases | combine({'bad_recurrence': 'NOT REFUSED'}) }}"
+      rescue:
+        - name: Record the refusal
+          ansible.builtin.set_fact:
+            _cases: "{{ _cases | combine({'bad_recurrence': ansible_failed_result.msg | default('')}) }}"
+
+    - name: CASE bad_time — a time that is not HH:MM is refused before any connection
+      block:
+        - name: Run the role with a malformed time
+          ansible.builtin.include_role:
+            name: homeassistant_backup
+          vars:
+            homeassistant_backup_time: "4:15"
+        - name: Record that it was not refused
+          ansible.builtin.set_fact:
+            _cases: "{{ _cases | combine({'bad_time': 'NOT REFUSED'}) }}"
+      rescue:
+        - name: Record the refusal
+          ansible.builtin.set_fact:
+            _cases: "{{ _cases | combine({'bad_time': ansible_failed_result.msg | default('')}) }}"
+
+    - name: Write the results for verify
+      ansible.builtin.copy:
+        content: "{{ _cases | to_json }}"
+        dest: /tmp/molecule_homeassistant_backup_results.json
+        mode: "0600"

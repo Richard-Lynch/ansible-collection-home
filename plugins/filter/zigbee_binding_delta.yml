@@ -1,0 +1,51 @@
+# Copyright: (c) 2026, Richard Lynch
+# GNU General Public License v3.0+ (see https://www.gnu.org/licenses/gpl-3.0.txt)
+---
+DOCUMENTATION:
+  name: zigbee_binding_delta
+  short_description: Diff declared Zigbee bindings against a live binding table
+  author: Richard Lynch (@Richard-Lynch)
+  description:
+    - Parses a list of binding declarations and a raw C(binds_get) result and diffs them.
+    - Takes the raw response so the parse and the diff cannot drift apart. For declarations already
+      normalised with P(richard_lynch.home.zigbee_parse_declared#filter), use P(richard_lynch.home.zigbee_delta_normalised#filter).
+  options:
+    _declared:
+      description: The list of binding declarations (as for P(richard_lynch.home.zigbee_parse_declared#filter)).
+      type: list
+      elements: dict
+      required: true
+    live:
+      description: The raw C(binds_get) result.
+      type: dict
+      required: true
+    source_ieee:
+      description: The IEEE of the device whose table was read, when the payload does not carry it.
+      type: str
+EXAMPLES: |
+  - name: Diff the declaration against the device
+    ansible.builtin.set_fact:
+      delta: "{{ zigbee_bindings | richard_lynch.home.zigbee_binding_delta(binds_get_result) }}"
+RETURN:
+  _value:
+    description: The diff.
+    type: dict
+    contains:
+      missing:
+        description: Declared bindings the device lacks (what converge writes).
+        type: list
+        elements: dict
+      present:
+        description: Declared bindings the device has.
+        type: list
+        elements: dict
+      extra:
+        description: Bindings on the device that are not declared (never touched by converge).
+        type: list
+        elements: dict
+      converged:
+        description: True when nothing declared is missing.
+        type: bool
+      counts:
+        description: Counts of C(declared), C(missing), C(present) and C(extra).
+        type: dict

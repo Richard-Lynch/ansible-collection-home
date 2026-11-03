@@ -1,25 +1,20 @@
 ---
-- name: Verify the schedule-diff decision matches the module's logic
+# Asserts what the REAL role did in converge. A refusal for the wrong reason is a failure here — in
+# particular "couldn't resolve module/action", which is what a module the role cannot find produces.
+- name: Verify
   hosts: localhost
   gather_facts: false
   tasks:
-    - name: Recompute both decisions (mirror the module)
-      vars:
-        desired: {recurrence: "daily", time: "04:15"}
-        current_match: {recurrence: "daily", time: "04:15:00"}
-        current_diff: {recurrence: "never", time: null}
+    - name: Load results
       ansible.builtin.set_fact:
-        match_needs_update: >-
-          {{ (current_match.recurrence != desired.recurrence)
-             or (desired.recurrence != 'never' and (current_match.time[:5]) != desired.time) }}
-        diff_needs_update: >-
-          {{ (current_diff.recurrence != desired.recurrence)
-             or (desired.recurrence != 'never' and ((current_diff.time or '')[:5]) != desired.time) }}
+        r: "{{ lookup('file', '/tmp/molecule_homeassistant_backup_results.json') | from_json }}"
 
-    - name: Idempotency — a matching schedule is NOT re-applied; a differing one IS
+    - name: Every case was refused, by the intended check
       ansible.builtin.assert:
         that:
-          - not (match_needs_update | bool)
-          - diff_needs_update | bool
-        fail_msg: "schedule-diff decision is wrong (would thrash or miss a needed update)."
-        success_msg: "schedule-diff is idempotent — HH:MM:SS vs HH:MM normalized, only real diffs update."
+          - r.no_token is search('homeassistant_backup_token is empty')
+          - r.unreachable is search('could not connect to the Home Assistant websocket')
+          - "r.bad_recurrence is search('value of recurrence must be one of: daily, weekly, never')"
+          - r.bad_time is search('time must be HH:MM')
+          - (r.values() | select('search', 'resolve module') | list) == []
+        fail_msg: "{{ r | to_nice_json }}"

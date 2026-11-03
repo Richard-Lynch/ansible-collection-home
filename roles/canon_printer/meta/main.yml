@@ -1,0 +1,16 @@
+---
+galaxy_info:
+  role_name: canon_printer
+  namespace: richard_lynch
+  author: Richard Lynch
+  description: >-
+    Read and converge a Canon PIXMA printer's settings through its Remote UI, rotate its admin
+    password, and run its maintenance jobs, each a plan unless explicitly applied.
+  license: GPL-3.0-or-later
+  min_ansible_version: "2.19"
+  galaxy_tags:
+    - printer
+    - canon
+    - pixma
+    - maintenance
+dependencies: []

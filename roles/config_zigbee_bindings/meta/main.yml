@@ -1,0 +1,16 @@
+---
+galaxy_info:
+  role_name: config_zigbee_bindings
+  namespace: richard_lynch
+  author: Richard Lynch
+  description: >-
+    Declare Zigbee direct bindings by IEEE address, diff them against the live ZHA binding tables,
+    converge them additively, and prune only behind a separate gate.
+  license: GPL-3.0-or-later
+  min_ansible_version: "2.19"
+  galaxy_tags:
+    - zigbee
+    - zha
+    - homeassistant
+    - bindings
+dependencies: []

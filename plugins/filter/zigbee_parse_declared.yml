@@ -1,0 +1,59 @@
+# Copyright: (c) 2026, Richard Lynch
+# GNU General Public License v3.0+ (see https://www.gnu.org/licenses/gpl-3.0.txt)
+---
+DOCUMENTATION:
+  name: zigbee_parse_declared
+  short_description: Normalise declared Zigbee bindings, one entry per binding and cluster
+  author: Richard Lynch (@Richard-Lynch)
+  description:
+    - Turns a list of binding declarations into normalised bindings, one per cluster.
+    - Each declaration has C(from) (source IEEE), optional C(from_endpoint) (default 1), exactly one
+      of C(to) (device IEEE, with optional C(to_endpoint)) or C(to_group) (group id), a non-empty
+      C(clusters) list and an optional C(state) (C(present) or C(absent)).
+    - Declarations with C(state=absent) are left out. An invalid declaration raises, naming it.
+  options:
+    _input:
+      description: The list of binding declarations.
+      type: list
+      elements: dict
+      required: true
+EXAMPLES: |
+  - name: Normalise the declared bindings
+    vars:
+      zigbee_bindings:
+        - name: hall switch to hall light
+          from: "00:11:22:33:44:55:66:77"
+          to: "00:11:22:33:44:55:66:88"
+          clusters: [genOnOff, genLevelCtrl]
+    ansible.builtin.debug:
+      msg: "{{ zigbee_bindings | richard_lynch.home.zigbee_parse_declared }}"
+RETURN:
+  _value:
+    description: One normalised binding per declared (binding, cluster).
+    type: list
+    elements: dict
+    contains:
+      src:
+        description: Source device IEEE (colon-separated lowercase).
+        type: str
+      src_ep:
+        description: Source endpoint.
+        type: int
+      cluster:
+        description: Cluster id.
+        type: int
+      cluster_name:
+        description: Cluster name, for example C(genOnOff).
+        type: str
+      dst_ieee:
+        description: Target device IEEE, or null for a group binding.
+        type: str
+      dst_ep:
+        description: Target endpoint, or null for a group binding.
+        type: int
+      group:
+        description: Target group id, or null for a device binding.
+        type: int
+      describe:
+        description: One-line description, C(src:ep --cluster--> target).
+        type: str

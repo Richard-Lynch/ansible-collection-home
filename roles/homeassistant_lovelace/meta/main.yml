@@ -1,0 +1,14 @@
+---
+galaxy_info:
+  role_name: homeassistant_lovelace
+  namespace: richard_lynch
+  author: Richard Lynch
+  description: >-
+    Deploy Home Assistant Lovelace dashboards as YAML and keep their dashboard registry in step.
+  license: GPL-3.0-or-later
+  min_ansible_version: "2.19"
+  galaxy_tags:
+    - homeassistant
+    - lovelace
+    - dashboards
+dependencies: []

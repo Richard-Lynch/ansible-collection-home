@@ -1,0 +1,42 @@
+# Copyright: (c) 2026, Richard Lynch
+# GNU General Public License v3.0+ (see https://www.gnu.org/licenses/gpl-3.0.txt)
+---
+DOCUMENTATION:
+  name: zigbee_bind_args
+  short_description: Build the zha_toolkit bind_ieee arguments for a normalised binding
+  author: Richard Lynch (@Richard-Lynch)
+  description:
+    - Converts one normalised binding (an element of P(richard_lynch.home.zigbee_parse_declared#filter)
+      or of a diff's C(missing)) into the zha_toolkit C(bind_ieee) service arguments that create it.
+    - 'C(command_data) is always set (the target IEEE or group id): without it the binding would go
+      to the coordinator.'
+  options:
+    _input:
+      description: One normalised binding.
+      type: dict
+      required: true
+EXAMPLES: |
+  - name: Write each missing binding
+    ansible.builtin.debug:
+      msg: "{{ item | richard_lynch.home.zigbee_bind_args }}"
+    loop: "{{ delta.missing }}"
+RETURN:
+  _value:
+    description: Service arguments.
+    type: dict
+    contains:
+      ieee:
+        description: Source device IEEE.
+        type: str
+      endpoint:
+        description: Source endpoint.
+        type: int
+      cluster:
+        description: Cluster id.
+        type: int
+      command_data:
+        description: Target device IEEE, or target group id.
+        type: raw
+      dst_endpoint:
+        description: Target endpoint (device bindings only).
+        type: int

@@ -1,0 +1,15 @@
+---
+galaxy_info:
+  role_name: homeassistant_config
+  namespace: richard_lynch
+  author: Richard Lynch
+  description: >-
+    Deploy Home Assistant's hand-authored YAML configuration, with a drift gate that refuses to
+    overwrite a live edit and a config check before any restart.
+  license: GPL-3.0-or-later
+  min_ansible_version: "2.19"
+  galaxy_tags:
+    - homeassistant
+    - configuration
+    - deploy
+dependencies: []
