@@ -1,0 +1,7 @@
+canon_printer
+config_zigbee_bindings
+homeassistant_backup
+homeassistant_config
+homeassistant_lovelace
+homeassistant_secrets
+homeassistant_update

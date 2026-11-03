@@ -1,0 +1,78 @@
+---
+# AUTO-GENERATED argument spec — DO NOT EDIT.
+#
+# Source of truth: roles/canon_printer/meta/argument_specs.py
+# Regenerate:      venv/bin/python tools/argspec/cli.py x generate canon_printer
+#
+# Edits here are silently overwritten on the next generation. To change a value or its
+# documentation, change the OptionSpec in the source file above — descriptions there
+# are emitted as the comments in this file.
+argument_specs:
+  main:
+    short_description: Manage a Canon PIXMA printer through its Remote UI admin API
+    version_added: '1.0'
+    author: Collection maintainers
+    options:
+      canon_printer_action:
+        description: 'probe: unauthenticated status (signal, link quality, error state). read: log in and report every settings group. converge: diff canon_printer_settings against the live printer; writes only with canon_printer_apply=true. rotate_password: new random admin password, 1Password first, then the device, proven by login; needs canon_printer_rotate_confirm=true. sync_password: make 1Password (URL), the credentials cache and the device agree — idempotent; finishes a rotation that stopped part-way. nozzle_check / cleaning / deep_cleaning: run that Maintenance-menu job and wait for it to finish — uses paper and/or ink, so it is a PLAN unless canon_printer_apply=true. power_off: soft power-off (caps the print head, as the ON button does); PLAN unless canon_printer_apply=true. The printer then needs its ON button.'
+        type: str
+        required: false
+        default: read
+        choices:
+          - probe
+          - read
+          - converge
+          - rotate_password
+          - sync_password
+          - nozzle_check
+          - cleaning
+          - deep_cleaning
+          - power_off
+      canon_printer_host:
+        description: "DNS name of the printer. Installation config, set in inventory. Prefer a name over an IP: the device's address is the DHCP server's to change."
+        type: str
+        required: true
+      canon_printer_password:
+        description: Remote UI admin password (typically a lazy 1Password lookup by item ID). Required for read and converge; probe needs none.
+        type: str
+        required: false
+        no_log: true
+      canon_printer_ca_cert:
+        description: PEM path of the printer's own CA (served at /cert_root.der). Pins TLS to the device. Unset means NO verification — first contact only.
+        type: str
+        required: false
+      canon_printer_settings:
+        description: 'Desired settings as {group: {FIELD: value}}; groups and writable fields are defined in module_utils/canon_rui.py GROUPS. Installation config — set in inventory, never in this role.'
+        type: dict
+        required: false
+        default: {}
+      canon_printer_password_item:
+        description: 1Password item ID holding the admin password (by ID, which also works for a title containing slashes). rotate_password rolls it and refreshes the credentials cache.
+        type: str
+        required: false
+      canon_printer_admin_url:
+        description: Website recorded on the 1Password item so 1Password autofills the Remote UI login. Installation config.
+        type: str
+        required: false
+      canon_printer_vault:
+        description: 1Password vault holding canon_printer_password_item. Required by rotate_password and sync_password; installation config.
+        type: str
+        required: false
+      canon_printer_cleaning_pattern:
+        description: Ink group for cleaning/deep_cleaning, sent as the UI's CLN_PATTERN. Unset sends the kick with no body, as the UI's own nor_cleaning() does (every group). Set it in a vars file (-e @file.yml), not on the command line.
+        type: str
+        required: false
+        choices:
+          - ALL
+          - PAT1
+          - PAT2
+      canon_printer_rotate_confirm:
+        description: Gate for rotate_password (the only flag that may be passed on the CLI).
+        type: bool
+        required: false
+        default: false
+      canon_printer_apply:
+        description: "Generate-don't-apply: converge and the maintenance/power actions report the plan unless this is true."
+        type: bool
+        required: false
+        default: false

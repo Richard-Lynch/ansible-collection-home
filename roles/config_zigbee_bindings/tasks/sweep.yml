@@ -1,0 +1,78 @@
+---
+# THE BACKSTOP, and the thing that makes the system self-healing.
+#
+# Walks every declared binding, skips the ones already present, and writes the ones that are not.
+# Cheap once converged: one binds_get per source device and no writes at all.
+#
+# WHY THIS IS THE ROBUSTNESS MECHANISM, not the event-driven automation: it depends on nothing but
+# the declaration. There is no trigger to miss and no event arriving while HA was restarting. The
+# drain automation makes a binding land FAST; this makes it land EVENTUALLY, which is the stronger
+# guarantee. A device that was switched off during a cutover, or factory-reset months later, is
+# picked up without anyone remembering it existed.
+#
+# Unlike `converge` it does NOT assert at the end and does NOT loop: an unconverged binding is a
+# normal state of the world on a schedule, and a cron that fails whenever a battery is out is a
+# cron everyone silences.
+
+- name: Read the live state
+  ansible.builtin.include_tasks: _read.yml
+
+- name: Decide what this sweep would write
+  ansible.builtin.set_fact:
+    # Only from READABLE devices. A device whose table could not be read is not assumed empty --
+    # that assumption is what would make a sweep re-write every confirmed binding on an offline
+    # device, on every schedule, forever.
+    _czb_sweep_targets: >-
+      {{ _czb_live | selectattr('readable') | map(attribute='delta.missing') | flatten }}
+
+- name: Report the sweep plan
+  ansible.builtin.debug:
+    msg: >-
+      Sweep: {{ _czb_sweep_targets | length }} binding(s) to write,
+      {{ _czb_live | rejectattr('readable') | list | length }} device(s) unreadable this pass
+      {{ '(DRY RUN — set config_zigbee_bindings_apply=true to write)'
+         if not (config_zigbee_bindings_apply | bool) else '' }}
+
+- name: Write the missing bindings
+  ansible.builtin.uri:
+    url: "{{ config_zigbee_bindings_ha_base_url }}/api/services/zha_toolkit/bind_ieee"
+    # NO ?return_response here: bind_ieee returns no data, and HA answers 400 if it is passed to a
+    # service that does not. The verdict comes from the re-read below, not from this response.
+    method: POST
+    headers:
+      Authorization: "Bearer {{ config_zigbee_bindings_ha_token }}"
+      Content-Type: application/json
+    body_format: json
+    body: >-
+      {{ (item | richard_lynch.home.zigbee_bind_args)
+         | combine({'tries': config_zigbee_bindings_tries | int, 'fail_exception': false}) }}
+    timeout: "{{ config_zigbee_bindings_timeout | int }}"
+    # fail_exception:false in the body AND a tolerated status here: a write to a sleeping device
+    # failing is the EXPECTED case, so it must not abort the sweep over other devices.
+    status_code: [200, 500]
+  loop: "{{ _czb_sweep_targets }}"
+  loop_control:
+    label: "{{ item.describe }}"
+  register: _czb_sweep_writes
+  no_log: true
+  when: config_zigbee_bindings_apply | bool
+  # Honest: a write was ATTEMPTED. Whether it landed is decided by the re-read below, never by
+  # this task -- which is why `changed` here means "we tried", and the report distinguishes the two.
+  changed_when: _czb_sweep_targets | length > 0
+
+- name: Re-read to establish what actually landed
+  # UNCONDITIONAL after the writes, and the only source of the verdict. A write returning 200
+  # proves the service call was accepted, not that the device received anything.
+  ansible.builtin.include_tasks: _read.yml
+  when: config_zigbee_bindings_apply | bool
+
+- name: Report the outcome
+  ansible.builtin.debug:
+    msg: >-
+      After the sweep:
+      {{ _czb_live | selectattr('readable') | map(attribute='delta.counts.present') | map('int') | sum }} confirmed,
+      {{ _czb_live | selectattr('readable') | map(attribute='delta.counts.missing') | map('int') | sum }} still pending,
+      {{ _czb_live | rejectattr('readable') | list | length }} unreadable.
+      Still-pending bindings are not a failure — they are devices that have not woken yet, and the
+      drain automation (action=install) or the next sweep will catch them.
+  when: config_zigbee_bindings_apply | bool

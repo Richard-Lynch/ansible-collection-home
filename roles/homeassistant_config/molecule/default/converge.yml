@@ -1,0 +1,182 @@
+---
+# Four cases through the role's OWN _drift_gate.yml. Entering via tasks_from still executes the
+# role's real code — the tautology trap (MOLMIRROR-01) is re-deriving the comparison in verify.yml,
+# not the entry point. Nothing here re-implements the checksum compare; every verdict below comes
+# from the role.
+- name: Converge
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    _mol_root: "{{ lookup('env', 'MOLECULE_EPHEMERAL_DIRECTORY') }}/ha-config-drift"
+    _mol_live: "{{ _mol_root }}/live"
+    _mol_repo: "{{ _mol_root }}/repo"
+    # One file, because the gate loops and the loop is not what is under test. Named for the file
+    # HA's automation editor rewrites on every save.
+    _mol_files: [automations.yaml]
+
+  tasks:
+    - name: Create the live and repo directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0755"
+      loop: ["{{ _mol_live }}", "{{ _mol_repo }}"]
+
+    # ---------------------------------------------------------------------------------------
+    # CASE 1 — DRIFTED. The live file carries an edit the source has never seen: a fix made in
+    # HA's UI that the next deploy would overwrite. The gate MUST refuse.
+    # ---------------------------------------------------------------------------------------
+    - name: Case 1 — repo copy
+      ansible.builtin.copy:
+        dest: "{{ _mol_repo }}/automations.yaml"
+        mode: "0644"
+        content: |
+          - id: '1700000000001'
+            trigger:
+              - subtype: button_3
+
+    - name: Case 1 — live copy, edited on the box (button_3 -> button_4)
+      ansible.builtin.copy:
+        dest: "{{ _mol_live }}/automations.yaml"
+        mode: "0644"
+        content: |
+          - id: '1700000000001'
+            trigger:
+              - subtype: button_4
+
+    - name: Case 1 — the gate must refuse to deploy
+      block:
+        - name: Case 1 — attempt
+          ansible.builtin.include_role:
+            name: homeassistant_config
+            tasks_from: _drift_gate.yml
+          vars:
+            homeassistant_config_dir: "{{ _mol_live }}"
+            homeassistant_config_src: "{{ _mol_repo }}"
+            homeassistant_config_files: "{{ _mol_files }}"
+            _ha_cfg_apply: true
+            _ha_cfg_protect: true
+
+        - name: Case 1 — reached ONLY if the gate did not fire
+          ansible.builtin.set_fact:
+            c1_refused: false
+            c1_drifted: "{{ _ha_cfg_drifted }}"
+      rescue:
+        - name: Case 1 — the gate fired, as required
+          ansible.builtin.set_fact:
+            c1_refused: true
+            c1_drifted: "{{ _ha_cfg_drifted }}"
+
+    # ---------------------------------------------------------------------------------------
+    # CASE 2 — THE NEAR-MISS. Same two directories, same gate, same flags; the only change is
+    # that the live file now matches the repo. A guard that cannot distinguish these two is a
+    # guard that will be turned off the first time it blocks a correct deploy.
+    # ---------------------------------------------------------------------------------------
+    - name: Case 2 — bring the live copy back in line with the repo
+      ansible.builtin.copy:
+        src: "{{ _mol_repo }}/automations.yaml"
+        dest: "{{ _mol_live }}/automations.yaml"
+        mode: "0644"
+        remote_src: true
+
+    - name: Case 2 — the gate must NOT fire
+      block:
+        - name: Case 2 — attempt
+          ansible.builtin.include_role:
+            name: homeassistant_config
+            tasks_from: _drift_gate.yml
+          vars:
+            homeassistant_config_dir: "{{ _mol_live }}"
+            homeassistant_config_src: "{{ _mol_repo }}"
+            homeassistant_config_files: "{{ _mol_files }}"
+            _ha_cfg_apply: true
+            _ha_cfg_protect: true
+
+        - name: Case 2 — the deploy was allowed, as required
+          ansible.builtin.set_fact:
+            c2_refused: false
+            c2_drifted: "{{ _ha_cfg_drifted }}"
+      rescue:
+        - name: Case 2 — FALSE POSITIVE — the gate blocked an undrifted file
+          ansible.builtin.set_fact:
+            c2_refused: true
+            c2_drifted: "{{ _ha_cfg_drifted }}"
+
+    # ---------------------------------------------------------------------------------------
+    # CASE 3 — the escape hatch. Drifted again, but protect=false: a deliberate revert of a live
+    # edit must stay possible, or the guard becomes something people route around rather than
+    # switch off on purpose. The drift is still RECORDED, which is what makes the overwrite
+    # auditable rather than silent.
+    # ---------------------------------------------------------------------------------------
+    - name: Case 3 — re-introduce the live edit
+      ansible.builtin.copy:
+        dest: "{{ _mol_live }}/automations.yaml"
+        mode: "0644"
+        content: |
+          - id: '1700000000001'
+            trigger:
+              - subtype: button_4
+
+    - name: Case 3 — protect=false must allow the overwrite
+      block:
+        - name: Case 3 — attempt
+          ansible.builtin.include_role:
+            name: homeassistant_config
+            tasks_from: _drift_gate.yml
+          vars:
+            homeassistant_config_dir: "{{ _mol_live }}"
+            homeassistant_config_src: "{{ _mol_repo }}"
+            homeassistant_config_files: "{{ _mol_files }}"
+            _ha_cfg_apply: true
+            _ha_cfg_protect: false
+
+        - name: Case 3 — allowed, as required
+          ansible.builtin.set_fact:
+            c3_refused: false
+            c3_drifted: "{{ _ha_cfg_drifted }}"
+      rescue:
+        - name: Case 3 — the escape hatch does not work
+          ansible.builtin.set_fact:
+            c3_refused: true
+            c3_drifted: "{{ _ha_cfg_drifted }}"
+
+    # ---------------------------------------------------------------------------------------
+    # CASE 4 — a DRY RUN over the same drifted pair. It must not abort (nothing is being
+    # written, and a preview that refuses to run cannot tell you what it found) but it MUST
+    # still record the drift, which is what the report prints.
+    # ---------------------------------------------------------------------------------------
+    - name: Case 4 — dry run over the drifted pair
+      block:
+        - name: Case 4 — attempt
+          ansible.builtin.include_role:
+            name: homeassistant_config
+            tasks_from: _drift_gate.yml
+          vars:
+            homeassistant_config_dir: "{{ _mol_live }}"
+            homeassistant_config_src: "{{ _mol_repo }}"
+            homeassistant_config_files: "{{ _mol_files }}"
+            _ha_cfg_apply: false
+            _ha_cfg_protect: true
+
+        - name: Case 4 — the dry run completed, as required
+          ansible.builtin.set_fact:
+            c4_refused: false
+            c4_drifted: "{{ _ha_cfg_drifted }}"
+      rescue:
+        - name: Case 4 — a dry run must never abort
+          ansible.builtin.set_fact:
+            c4_refused: true
+            c4_drifted: "{{ _ha_cfg_drifted }}"
+
+    # set_fact does not survive between molecule's converge and verify playbooks (separate runs),
+    # so the verdicts are handed over on disk as plain data.
+    - name: Hand the verdicts to verify.yml
+      ansible.builtin.copy:
+        dest: "{{ _mol_root }}/verdicts.json"
+        mode: "0644"
+        content: |
+          {{ {'c1_refused': c1_refused, 'c1_drifted': c1_drifted,
+              'c2_refused': c2_refused, 'c2_drifted': c2_drifted,
+              'c3_refused': c3_refused, 'c3_drifted': c3_drifted,
+              'c4_refused': c4_refused, 'c4_drifted': c4_drifted} | to_nice_json }}

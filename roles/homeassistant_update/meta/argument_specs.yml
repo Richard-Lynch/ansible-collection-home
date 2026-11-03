@@ -1,0 +1,103 @@
+---
+# AUTO-GENERATED argument spec — DO NOT EDIT.
+#
+# Source of truth: roles/homeassistant_update/meta/argument_specs.py
+# Regenerate:      venv/bin/python tools/argspec/cli.py x generate homeassistant_update
+#
+# Edits here are silently overwritten on the next generation. To change a value or its
+# documentation, change the OptionSpec in the source file above — descriptions there
+# are emitted as the comments in this file.
+argument_specs:
+  main:
+    short_description: Update Home Assistant Core, OS or Supervisor, with backup and rollback
+    version_added: '1.0'
+    author: Collection maintainers
+    options:
+      homeassistant_base_url:
+        description:
+          - Home Assistant base URL (http://host:8123), used for the entity-count
+          - health check. Installation config, set by the caller.
+        type: str
+        required: true
+      homeassistant_token:
+        description:
+          - Long-lived access token for the REST API, resolved by the caller from its
+          - secret store. Never logged.
+        type: str
+        required: true
+        no_log: true
+      homeassistant_update_component:
+        description:
+          - Which component to update. `core` is Home Assistant itself; `os` and
+          - '`supervisor` are the appliance underneath it.'
+        type: str
+        required: false
+        default: core
+        choices:
+          - core
+          - os
+          - supervisor
+      homeassistant_update_version:
+        description:
+          - Target version. Empty means "whatever the Supervisor reports as
+          - version_latest", which is what the UI button does.
+        type: str
+        required: false
+        default: ''
+      homeassistant_update_apply:
+        description:
+          - GENERATE-DON'T-APPLY. Default reports what WOULD be updated and changes
+          - nothing.
+        type: bool
+        required: false
+        default: false
+      homeassistant_update_backup:
+        description:
+          - Take a partial backup (Core + config) before updating.
+          - ''
+          - 'ON by default and it should stay on: this is the only thing that makes the'
+          - update reversible. Partial rather than full because a full backup also
+          - carries add-on data and media — gigabytes that a Core update cannot affect,
+          - on an appliance disk that is often small.
+        type: bool
+        required: false
+        default: true
+      homeassistant_update_min_free_mb:
+        description:
+          - Refuse to start if free disk is below this, in MB.
+          - ''
+          - A partial backup is typically over a gigabyte. An update that fills the disk
+          - 'mid-write is far worse than one that never started: the Supervisor can be'
+          - left with a half-pulled image and no room for the rollback backup either.
+        type: int
+        required: false
+        default: 3000
+      homeassistant_update_settle_timeout:
+        description:
+          - How long to wait for HA to come back and report a healthy entity count, in
+          - seconds.
+        type: int
+        required: false
+        default: 600
+      homeassistant_update_min_entities:
+        description:
+          - Minimum entities that must be present after the update for it to count as
+          - successful.
+          - ''
+          - 0 means "derive it from the pre-update count", which is the honest default
+          - — a fixed number goes stale as the installation grows, and a too-low one
+          - passes a broken start. Recovery mode reports only a few dozen.
+        type: int
+        required: false
+        default: 0
+      homeassistant_update_rollback:
+        description:
+          - Roll back automatically if post-update validation fails.
+          - ''
+          - OFF by default, deliberately. An automatic restore is itself a risky, long
+          - operation, and doing it unattended on a failure nobody has looked at can
+          - turn a recoverable problem into a confusing one. The failure message names
+          - the backup to restore instead. Set true for unattended runs.
+        type: bool
+        required: false
+        default: false

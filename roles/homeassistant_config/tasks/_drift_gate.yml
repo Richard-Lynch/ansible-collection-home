@@ -1,0 +1,83 @@
+---
+# THE DRIFT GATE: refuse to overwrite a live edit.
+#
+# An unconditional `copy` discards whatever the box holds, and for THESE files that is the normal
+# case rather than the exotic one: HA's automation editor rewrites automations.yaml on every save,
+# the scene editor rewrites scenes.yaml, and the vscode add-on can write any of them. Without this
+# gate a deploy over a UI edit reports `changed` and means it, and nothing reports the loss. A
+# backup taken first does not help: a backup nobody knows to restore is not protection.
+#
+# Mirrors homeassistant_lovelace, which has the same gate. The two roles write the
+# same kind of file to the same box, so they must not disagree about whether clobbering a live
+# edit is acceptable.
+#
+# Kept in its OWN file so the molecule scenario can enter here (`tasks_from: _drift_gate`) and
+# exercise the real gate in both directions without a live HA, a tar backup or a Supervisor call.
+# Expects the caller to have resolved the role's options and set `_ha_cfg_apply` /
+# `_ha_cfg_protect`; main.yml does both before including this.
+
+- name: Reset the drift list for this invocation
+  # `set_fact` persists for the whole play, and the accumulator below only ever APPENDS. Without
+  # this a second include in one play would carry the first call's drift forward — a gate that
+  # fires on a clean host because of something another host did, which is the fastest way to get
+  # a real guard disabled.
+  ansible.builtin.set_fact:
+    _ha_cfg_drifted: []
+
+- name: Checksum the live files, to detect drift before overwriting
+  ansible.builtin.stat:
+    path: "{{ homeassistant_config_dir }}/{{ item }}"
+    checksum_algorithm: sha1
+  loop: "{{ homeassistant_config_files }}"
+  loop_control:
+    label: "{{ item }}"
+  register: _ha_cfg_live
+
+- name: Checksum the source copies, to compare against
+  # The source copy IS the record of what was last deployed: capturing the live files back into it
+  # is the only sanctioned way it moves relative to the box, so live != source means someone wrote
+  # to the box outside this role. There is no separate manifest to go stale — same model as
+  # homeassistant_lovelace.
+  ansible.builtin.stat:
+    path: "{{ homeassistant_config_src }}/{{ item }}"
+    checksum_algorithm: sha1
+  loop: "{{ homeassistant_config_files }}"
+  loop_control:
+    label: "{{ item }}"
+  delegate_to: localhost
+  register: _ha_cfg_repo
+
+- name: Identify drifted files
+  # A plain loop rather than a zip/selectattr filter chain, matching the lovelace role: a clever
+  # one-liner here is easy to get wrong in the direction that reads as "no drift".
+  #
+  # A file absent on EITHER side is not drift: absent on the box is a first deploy, absent in the
+  # source is the copy task's own error. Only two files that both exist and differ count.
+  ansible.builtin.set_fact:
+    _ha_cfg_drifted: "{{ _ha_cfg_drifted + [item.0.item] }}"
+  loop: "{{ _ha_cfg_live.results | zip(_ha_cfg_repo.results) | list }}"
+  loop_control:
+    label: "{{ item.0.item }}"
+  when:
+    - item.0.stat.exists
+    - item.1.stat.exists
+    - item.0.stat.checksum != item.1.stat.checksum
+
+- name: HARD GATE — refuse to clobber live changes
+  # Gated on `apply` because a dry run writes nothing and should still REPORT the drift rather
+  # than abort (main.yml's report names it on both paths). Gated on `protect` so a deliberate
+  # revert stays possible — but it has to be asked for, which is the whole difference from the
+  # behaviour this replaces.
+  ansible.builtin.assert:
+    that:
+      - "(_ha_cfg_drifted | length) == 0"
+    fail_msg: >-
+      These files differ on {{ inventory_hostname }} from what the source directory holds:
+      {{ _ha_cfg_drifted | join(', ') }} — someone edited them outside Ansible (HA's own UI
+      counts, and is the usual cause). Deploying would DISCARD that work and report success.
+      Capture the live version into {{ homeassistant_config_src }} and review the diff, or re-run
+      with homeassistant_config_protect=false to overwrite deliberately.
+    quiet: true
+  when:
+    - _ha_cfg_apply
+    - _ha_cfg_protect

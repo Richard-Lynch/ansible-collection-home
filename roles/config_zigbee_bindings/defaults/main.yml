@@ -1,0 +1,87 @@
+---
+# AUTO-GENERATED defaults file — DO NOT EDIT.
+#
+# Source of truth: roles/config_zigbee_bindings/meta/argument_specs.py
+# Regenerate:      venv/bin/python tools/argspec/cli.py x generate config_zigbee_bindings
+#
+# Edits here are silently overwritten on the next generation. To change a value or its
+# documentation, change the OptionSpec in the source file above — descriptions there
+# are emitted as the comments in this file.
+# Entrypoint:      main
+
+# Which operation to perform. READ BY DEFAULT: `status` changes nothing, so a bare
+# run of this role is always safe. The three writing actions each need their own
+# explicit gate (see *_apply and *_prune).
+# probe    - dump every ZHA device and its live binding table, plus a paste-ready
+#            `zigbee_bindings` block. The bootstrap step: HA's UI never shows a
+#            Zigbee IEEE address, and a binding cannot be declared without one.
+# status   - diff declared against live and report. Exits 0 whether or not everything
+#            is converged, because a device being switched off is a normal state of
+#            the world, not a failure.
+# converge - write the missing bindings, attended. ADDITIVE ONLY.
+# sweep    - the same reconcile, unattended and quiet; intended for a schedule.
+# install  - generate the pending-state helpers and the drain automation into HA's
+#            config, so a binding lands at the next opportunity without a human.
+# prune    - remove bindings that are on a device but not declared.
+config_zigbee_bindings_action__default: status
+
+# HTTP timeout, seconds. Generous by default: a `binds_get` against a sleeping device
+# waits on ZDO Mgmt_Bind_req retries inside zha_toolkit before it gives up.
+config_zigbee_bindings_timeout__default: 60
+
+# The declared bindings — the DESIRED STATE, and the durable record of intent that
+# outlives any single run. Each element:
+#   name          optional label used in reports and generated automation aliases
+#   from          IEEE of the SOURCE device (the switch/remote)  [required]
+#   from_endpoint source endpoint; defaults to 1
+#   to            IEEE of the TARGET device                      | exactly one of
+#   to_group      ZHA group id to bind to                        | these two
+#   to_endpoint   target endpoint, only with `to`; defaults to 1
+#   clusters      which of the five bindable clusters            [required]
+#   wake          mains | sleepy | dormant — reachability class, sets patience only
+#   state         present (default) | absent
+# KEYED ON IEEE, DELIBERATELY. Friendly names and HA registry UUIDs are both UI
+# state: renameable, and regenerated when a device is re-paired. The IEEE is the
+# device. zha_toolkit's `ieee` field would accept a name, which is exactly why this
+# role passes IEEE only — a rename must never silently retarget a binding.
+# `to`/`to_group` mutual exclusion CANNOT be expressed here: a role argspec has no
+# mutually_exclusive, and these are sub-keys of a list element, which role argspecs
+# do not validate deeply. It is asserted in _preflight.yml and again in the diff
+# module. That matters because the unguarded case is not inert — bind_ieee with no
+# target binds to the COORDINATOR, quietly creating a real binding nobody asked for.
+config_zigbee_bindings_bindings__default: []
+
+# Must be true for `converge`, `sweep` or `install` to write anything. False reports what
+# WOULD happen and changes nothing — generate, don't apply, for anything that alters
+# device state.
+config_zigbee_bindings_apply__default: false
+
+# Must be true for `prune` to REMOVE a binding. Separate from _apply on purpose:
+# converging and deleting are different decisions and must not share one switch.
+# ZHA binds every device to the coordinator during its interview, and a network usually
+# has bindings that predate this role. A converge that pruned would tear those out
+# network-wide on its first run and break state reporting for every bound device.
+config_zigbee_bindings_prune__default: false
+
+# How many read-write-reread passes `converge` makes before giving up on a
+# device. Giving up is not a failure of the system — it means the device
+# never woke — so the binding stays pending and the report says so.
+config_zigbee_bindings_max_passes__default: 8
+
+# Seconds between passes. The default suits a `dormant` device being
+# pressed by a human standing next to it; `mains` targets want far less.
+# This is a PERFORMANCE knob only — no amount of patience converges a
+# device whose battery is out, which is what `install` exists for.
+config_zigbee_bindings_pass_delay__default: 15
+
+# zha_toolkit's own per-request retry count. Deliberately left SMALL: it
+# retries 0.1s apart, so it covers a flaky mesh and cannot cover a sleep
+# window. Raising it to 100 buys ~10s of mesh flooding and still misses
+# the next button press. Patience belongs in max_passes/pass_delay.
+config_zigbee_bindings_tries__default: 3
+
+# HA's config directory as seen from the SSH add-on, where `install`
+# writes the generated managed blocks. NEVER .storage/ — HA holds those
+# files in memory and rewrites them on shutdown, so a play's edit there is
+# silently reverted.
+config_zigbee_bindings_ha_config_dir__default: /config

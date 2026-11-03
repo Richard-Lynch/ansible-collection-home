@@ -1,0 +1,22 @@
+---
+# AUTO-GENERATED defaults file — DO NOT EDIT.
+#
+# Source of truth: roles/canon_printer/meta/argument_specs.py
+# Regenerate:      venv/bin/python tools/argspec/cli.py x generate canon_printer
+#
+# Edits here are silently overwritten on the next generation. To change a value or its
+# documentation, change the OptionSpec in the source file above — descriptions there
+# are emitted as the comments in this file.
+# Entrypoint:      main
+
+# probe: unauthenticated status (signal, link quality, error state). read: log in and report every settings group. converge: diff canon_printer_settings against the live printer; writes only with canon_printer_apply=true. rotate_password: new random admin password, 1Password first, then the device, proven by login; needs canon_printer_rotate_confirm=true. sync_password: make 1Password (URL), the credentials cache and the device agree — idempotent; finishes a rotation that stopped part-way. nozzle_check / cleaning / deep_cleaning: run that Maintenance-menu job and wait for it to finish — uses paper and/or ink, so it is a PLAN unless canon_printer_apply=true. power_off: soft power-off (caps the print head, as the ON button does); PLAN unless canon_printer_apply=true. The printer then needs its ON button.
+canon_printer_action__default: read
+
+# Desired settings as {group: {FIELD: value}}; groups and writable fields are defined in module_utils/canon_rui.py GROUPS. Installation config — set in inventory, never in this role.
+canon_printer_settings__default: {}
+
+# Gate for rotate_password (the only flag that may be passed on the CLI).
+canon_printer_rotate_confirm__default: false
+
+# Generate-don't-apply: converge and the maintenance/power actions report the plan unless this is true.
+canon_printer_apply__default: false

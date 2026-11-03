@@ -1,0 +1,40 @@
+# Copyright: (c) 2026, Richard Lynch
+# GNU General Public License v3.0+ (see https://www.gnu.org/licenses/gpl-3.0.txt)
+# SPDX-License-Identifier: GPL-3.0-or-later
+---
+namespace: richard_lynch
+name: home
+version: 1.0.0
+readme: README.md
+authors:
+  - Richard Lynch
+description: >-
+  Home automation roles and plugins: Home Assistant configuration, dashboards, secrets, updates and backup schedule through its own APIs; declared Zigbee (ZHA) bindings reconciled against the live devices; and a Canon PIXMA printer's settings, password and maintenance jobs through its Remote UI.
+license:
+  - GPL-3.0-or-later
+tags:
+  - homeassistant
+  - zigbee
+  - printer
+  - home
+  - automation
+dependencies:
+  richard_lynch.common: ">=1.0.0,<2.0.0"
+repository: https://github.com/Richard-Lynch/ansible-collection-home
+documentation: https://github.com/Richard-Lynch/ansible-collection-home/blob/main/README.md
+homepage: https://github.com/Richard-Lynch/ansible-collection-home
+issues: https://github.com/Richard-Lynch/ansible-collection-home/issues
+build_ignore:
+  - .ansible-lint
+  - configured_roles.txt
+  - roles/*/defaults/SKIP
+  - .github
+  - .gitignore
+  - collections.galaxy
+  - devkit.toml
+  - dist
+  - export.manifest
+  - tests/output
+  - roles/*/meta/argument_specs.py
+  - roles/*/molecule
+  - "*.tar.gz"

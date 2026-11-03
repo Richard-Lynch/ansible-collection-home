@@ -1,0 +1,23 @@
+---
+# Manage a Canon PIXMA printer through its Remote UI admin API.
+#
+# The printer has no shell: every task runs on the controller (the inventory host is
+# `ansible_connection: local`) and talks HTTPS to the device through richard_lynch.home.canon_printer_settings,
+# which wraps the canon_rui SDK (this collection's plugins/module_utils/canon_rui.py).
+#
+#   probe     unauthenticated status — signal/link quality, error state. No password.
+#   read      log in, report every settings group.
+#   converge  diff canon_printer_settings against the LIVE printer; write only with
+#             canon_printer_apply=true. Every write is read-modify-write of the whole page plus a
+#             read-back, so the report is what the device says afterwards.
+#   nozzle_check / cleaning / deep_cleaning
+#             run that Maintenance-menu job and wait for the device to finish it. Uses paper/ink:
+#             PLAN unless canon_printer_apply=true.
+#   power_off soft power-off over CHMP — caps the print head, as the ON button does. PLAN unless
+#             canon_printer_apply=true; the printer then needs its ON button to come back.
+
+- name: Resolve generated defaults
+  ansible.builtin.include_tasks: _resolve_defaults.yml
+
+- name: Run the requested action
+  ansible.builtin.include_tasks: "{{ canon_printer_action }}.yml"

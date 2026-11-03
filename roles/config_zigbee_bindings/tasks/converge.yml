@@ -1,0 +1,102 @@
+---
+# THE ATTENDED LOOP — the impatient path, for a cutover or an operator standing next to the device.
+#
+# Loops read -> diff -> write -> wait, then takes its verdict from ONE FINAL UNCONDITIONAL RE-READ.
+# That structure is mandatory rather than stylistic:
+#
+#   * `until:` + a tolerated failure exhausts its retries and then CONTINUES, so a failed wait
+#     exits green (UNTIL-01). The post-loop assert is what makes exhaustion a failure.
+#   * The verdict must not come from a task's `.failed`: every write here tolerates failure (a
+#     sleeping device is the normal case), which pins `.failed` to False and would make a check
+#     gated on it structurally unable to fire (FAILED-01).
+#
+# Same shape as homeassistant_update's post-update health check, which computes its health
+# verdict from entity counts for exactly this reason -- worth reading before changing this file.
+#
+# ADDITIVE ONLY. Undeclared bindings are reported and never touched: ZHA binds every device to the
+# coordinator during interview, so a converge that pruned would break reporting network-wide on
+# its first run. Removal is `prune`, behind its own separate flag.
+
+- name: Assert the apply gate before anything is written
+  ansible.builtin.assert:
+    that:
+      - config_zigbee_bindings_apply | bool
+    fail_msg: >-
+      converge writes to devices and needs an explicit gate:
+      EXTRA='config_zigbee_bindings_action=converge config_zigbee_bindings_apply=true'.
+      For a preview that changes nothing, use config_zigbee_bindings_action=status.
+    quiet: true
+
+- name: Read the live state before converging
+  ansible.builtin.include_tasks: _read.yml
+
+- name: Record the starting point
+  ansible.builtin.set_fact:
+    _czb_before: >-
+      {{ _czb_live | selectattr('readable') | map(attribute='delta.counts.missing') | map('int') | sum }}
+
+- name: Prompt for the devices that only wake on a button press
+  # Not decoration: for a `dormant` device this is the ONLY thing that opens the window. Zigbee's
+  # parent buffering holds a message for 7.68s, so the write has to coincide with a press -- and
+  # pressing the button a few times is the supported way to make that happen sooner.
+  ansible.builtin.debug:
+    msg: >-
+      PRESS THE BUTTON on: {{ _czb_dormant | join(', ') }}
+      — repeatedly, over the next
+      {{ ((config_zigbee_bindings_max_passes | int) * (config_zigbee_bindings_pass_delay | int)) }}s.
+      Each press opens a ~7.68s window in which the binding can be written.
+  vars:
+    _czb_dormant: >-
+      {{ _czb_live | selectattr('readable')
+         | rejectattr('delta.converged')
+         | map(attribute='ieee') | list }}
+  when: _czb_live | selectattr('readable') | rejectattr('delta.converged') | list | length > 0
+
+- name: Converge
+  ansible.builtin.include_tasks: _converge_pass.yml
+  loop: "{{ range(1, (config_zigbee_bindings_max_passes | int) + 1) | list }}"
+  loop_control:
+    loop_var: _czb_pass
+    label: "pass {{ _czb_pass }}/{{ config_zigbee_bindings_max_passes }}"
+  # An include_tasks loop rather than `until:` on a block: `until` cannot wrap an include, and a
+  # block cannot retry. The pass file no-ops once converged, so this is a bounded loop that stops
+  # doing work rather than one that keeps hammering -- and `_czb_pass` makes the progress visible.
+  when: not (_czb_converged_early | default(false))
+
+- name: Re-read to establish the verdict
+  # UNCONDITIONAL. The loop may have ended because it converged OR because it ran out of passes,
+  # and only a fresh read distinguishes those. Everything above this line is advisory.
+  ansible.builtin.include_tasks: _read.yml
+
+- name: Compute the verdict from the device's own binding table
+  ansible.builtin.set_fact:
+    _czb_still_missing: >-
+      {{ _czb_live | selectattr('readable') | map(attribute='delta.missing') | flatten }}
+    _czb_unreadable: "{{ _czb_live | rejectattr('readable') | map(attribute='ieee') | list }}"
+
+- name: Report the outcome
+  ansible.builtin.debug:
+    msg: >-
+      Converge: {{ _czb_before }} binding(s) pending at the start,
+      {{ _czb_still_missing | length }} still pending,
+      {{ _czb_unreadable | length }} device(s) unreadable.{%- if _czb_still_missing | length > 0 %}
+      Pending: {{ _czb_still_missing | map(attribute='describe') | join(' | ') }}{%- endif %}
+
+- name: Fail if a binding the operator asked for did not land
+  # The assert that makes an exhausted loop a failure rather than a green no-op. Deliberately
+  # ignores `extra` (converge is additive) and treats an unreadable device as a failure too --
+  # "I could not tell" is not success.
+  ansible.builtin.assert:
+    that:
+      - _czb_still_missing | length == 0
+      - _czb_unreadable | length == 0
+    fail_msg: >-
+      Not converged after {{ config_zigbee_bindings_max_passes }} pass(es).{%- if _czb_still_missing | length > 0 %}
+      Still missing: {{ _czb_still_missing | map(attribute='describe') | join(' | ') }}.{%- endif %}{%- if _czb_unreadable | length > 0 %}
+      Unreadable: {{ _czb_unreadable | join(', ') }}.{%- endif %}
+      For a battery device this usually means it did not wake — press its button and re-run, or
+      run action=install so the drain automation catches the next press unattended. A device that
+      NEVER converges is more likely a wrong IEEE or a dead battery than a timing problem.
+    success_msg: >-
+      All {{ _czb_declared | length }} declared binding(s) are confirmed present on the devices'
+      own binding tables.

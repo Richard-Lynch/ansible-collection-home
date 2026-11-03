@@ -1,0 +1,28 @@
+---
+# homeassistant_backup — set HA's native automatic-backup SCHEDULE via the websocket API (the
+# only API that can set it). Runs from localhost. Idempotent via the ha_backup_config
+# module (reads current schedule, updates only if different). Fails loud if the token is missing.
+
+- name: Assert the HA long-lived token is available
+  ansible.builtin.assert:
+    that:
+      - homeassistant_backup_token | length > 0
+    fail_msg: >-
+      homeassistant_backup_token is empty: the caller must resolve a Home Assistant long-lived
+      access token (Profile -> Security -> Long-lived access tokens) and pass it.
+    quiet: true
+
+- name: Configure the HA automatic-backup schedule (websocket)
+  ha_backup_config:
+    base_url: "{{ homeassistant_backup_base_url }}"
+    token: "{{ homeassistant_backup_token }}"
+    recurrence: "{{ homeassistant_backup_recurrence }}"
+    time: "{{ homeassistant_backup_time }}"
+    run_now: "{{ homeassistant_backup_run_now | bool }}"
+  register: _ha_backup
+
+- name: Report the resulting schedule
+  ansible.builtin.debug:
+    msg: >-
+      HA automatic backup schedule: {{ _ha_backup.schedule | default({}) }}
+      {{ '(a backup was triggered now)' if (homeassistant_backup_run_now | bool) else '' }}

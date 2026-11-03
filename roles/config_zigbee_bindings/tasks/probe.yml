@@ -1,0 +1,134 @@
+---
+# THE BOOTSTRAP STEP, and read-only. HA's entity and device registries reference a ZHA device by an
+# opaque registry UUID, not its IEEE address. A binding cannot be declared without an IEEE, so this
+# runs first.
+#
+# It also answers the REPORTING question in the same pass: which devices support attribute
+# reporting decides whether a binding should target the device or a group, and the manufacturer is
+# the only signal available for that (IKEA/Innr report well, older Hue poorly, GLEDOPTO not at all).
+#
+# Deliberately does NOT need the declaration to be populated -- that is what it exists to produce.
+
+- name: Read every ZHA device
+  ansible.builtin.uri:
+    url: "{{ config_zigbee_bindings_ha_base_url }}/api/services/zha_toolkit/zha_devices?return_response"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ config_zigbee_bindings_ha_token }}"
+      Content-Type: application/json
+    body_format: json
+    body: {}
+    timeout: "{{ config_zigbee_bindings_timeout | int }}"
+    status_code: [200]
+  register: _czb_probe_raw
+  no_log: true
+  changed_when: false
+
+- name: Assert the device list parsed
+  ansible.builtin.assert:
+    that:
+      - _czb_probe_raw.json is defined
+      - _czb_probe_raw.json.service_response is defined
+      - _czb_probe_raw.json.service_response.devices is defined
+    fail_msg: >-
+      zha_devices returned a body that could not be parsed (content-type
+      '{{ _czb_probe_raw.content_type | default("unknown") }}'). Reporting "no devices" here would
+      be actively misleading, so the run stops.
+    quiet: true
+
+- name: Normalise the inventory
+  ansible.builtin.set_fact:
+    _czb_probe_devices: "{{ _czb_probe_raw.json.service_response.devices | richard_lynch.home.zigbee_devices_by_ieee }}"
+
+- name: Report the device inventory
+  ansible.builtin.debug:
+    msg: >-
+      {{ item.ieee }}  {{ item.name | default('(unnamed)') }}
+      [{{ item.manufacturer | default('?') }} {{ item.model | default('?') }}]
+      {{ 'available' if (item.available | default(false)) else 'UNAVAILABLE' }}{%- if (item.last_seen | default('')) | length > 0 %} last_seen={{ item.last_seen }}{% endif %}{%- if (item.power_source | default('')) | length > 0 %} power={{ item.power_source }}{% endif %}
+  loop: "{{ _czb_probe_devices }}"
+  loop_control:
+    label: "{{ item.ieee }}"
+
+- name: Read the live binding table for every device
+  # Every device, not just declared sources: this is the "what is actually bound on this network
+  # right now?" question, which nothing else answers. Tolerates per-device failure so one
+  # sleeping remote does not abort the sweep.
+  ansible.builtin.uri:
+    url: "{{ config_zigbee_bindings_ha_base_url }}/api/services/zha_toolkit/binds_get?return_response"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ config_zigbee_bindings_ha_token }}"
+      Content-Type: application/json
+    body_format: json
+    body:
+      ieee: "{{ item.ieee }}"
+      tries: "{{ config_zigbee_bindings_tries | int }}"
+      fail_exception: true
+    timeout: "{{ config_zigbee_bindings_timeout | int }}"
+    status_code: [200, 500]
+  loop: "{{ _czb_probe_devices }}"
+  loop_control:
+    label: "{{ item.ieee }}"
+  register: _czb_probe_binds
+  no_log: true
+  changed_when: false
+
+- name: Collect the readable binding tables
+  # The parse filter RAISES on an unparseable table, so it is only called where the status and the
+  # response shape say the table was genuinely read. Unreadable devices are kept as a separate
+  # count rather than being silently folded in as "no bindings".
+  #
+  # NO source_ieee here, deliberately -- unlike the converge path. That argument asserts "every
+  # row in this table is sourced from the device I asked about", which is correct when diffing ONE
+  # device's own declaration but wrong for a survey: a coordinator's table legitimately holds rows
+  # sourced from the devices bound TO it. Passing it here failed the whole probe on the
+  # coordinator, which is exactly the device whose bindings are most worth seeing.
+  ansible.builtin.set_fact:
+    _czb_probe_tables: >-
+      {{ _czb_probe_tables | default([]) + [{
+        'ieee': item.item.ieee,
+        'name': item.item.name | default(''),
+        'readable': (item.status == 200 and item.json.service_response.result is defined),
+        'bindings': (item.json | richard_lynch.home.zigbee_parse_live)
+                    if (item.status == 200 and item.json.service_response.result is defined) else [],
+      }] }}
+  loop: "{{ _czb_probe_binds.results }}"
+  loop_control:
+    label: "{{ item.item.ieee }}"
+
+- name: Report the live bindings
+  ansible.builtin.debug:
+    msg: >-
+      {{ item.ieee }} {{ '(' ~ item.name ~ ')' if item.name else '' }}:{%- if not item.readable %} table UNREADABLE (asleep, or not reachable){%- elif item.bindings | length == 0 %} no bindings{%- else %}
+      {{ item.bindings | map(attribute='describe') | join(' | ') }}{%- endif %}
+  loop: "{{ _czb_probe_tables }}"
+  loop_control:
+    label: "{{ item.ieee }}"
+  when: item.readable or (item.bindings | length > 0) or true
+
+- name: Emit a paste-ready zigbee_bindings block for the bindings that already exist
+  # So nobody hand-types an IEEE -- a mistyped one produces a binding that never converges and
+  # reads as "the device is asleep", the most expensive failure in this system.
+  #
+  # `unique` is NOT cosmetic: one binding appears in the table of BOTH ends (and of the
+  # coordinator), so without it a survey of N devices emits the same declaration N times and
+  # pasting the output declares each binding several times over.
+  ansible.builtin.debug:
+    msg: "{{ _czb_probe_suggestion }}"
+  vars:
+    _czb_probe_suggestion: >-
+      {{ {'zigbee_bindings': (
+            _czb_probe_tables | selectattr('readable') | map(attribute='bindings') | flatten
+            | unique | map('richard_lynch.home.zigbee_declaration_stanza') | list
+         )} | to_nice_yaml(indent=2) }}
+
+- name: Write the probe report
+  ansible.builtin.copy:
+    content: >-
+      {{ {'devices': _czb_probe_devices, 'tables': _czb_probe_tables} | to_nice_json }}
+    dest: "{{ config_zigbee_bindings_report_path }}"
+    mode: "0644"
+  delegate_to: localhost
+  when: config_zigbee_bindings_report_path | default('', true) | length > 0
+  changed_when: false

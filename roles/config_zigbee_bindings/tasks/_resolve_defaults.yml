@@ -1,0 +1,55 @@
+---
+# AUTO-GENERATED defaults resolver — DO NOT EDIT.
+#
+# Source of truth: roles/config_zigbee_bindings/meta/argument_specs.py
+# Regenerate:      venv/bin/python tools/argspec/cli.py x generate config_zigbee_bindings
+#
+# Edits here are silently overwritten on the next generation. To change a value or its
+# documentation, change the OptionSpec in the source file above — descriptions there
+# are emitted as the comments in this file.
+
+# Binds every declared option to its generated default, so a caller-supplied value
+# wins and an unsupplied one falls back rather than evaluating Undefined.
+#
+# Include this FIRST from every entrypoint:
+#   - ansible.builtin.include_tasks: _resolve_defaults.yml
+#
+# Role-specific setup logic belongs in tasks/setup_vars.yml, NOT here — this file is
+# overwritten on every generation.
+#
+# TWO BRANCHES, because `set_fact` persists for the whole play. A role invoked twice in
+# one play would otherwise see its OWN leftover facts on the second call, so a later
+# caller that omitted an option silently inherited the earlier caller's value instead of
+# the declared default. On a repeat call this ignores the role's own facts and rebinds
+# the defaults; an include-level `vars:` shadows the fact, so a value the caller DID
+# supply this time still wins. Roles called once per play only ever run the first branch.
+
+- name: Resolve declared options over their generated defaults
+  ansible.builtin.set_fact:
+    config_zigbee_bindings_action: "{{ config_zigbee_bindings_action | default(config_zigbee_bindings_action__default) if config_zigbee_bindings_action__default is defined else config_zigbee_bindings_action | default(omit) }}"
+    config_zigbee_bindings_timeout: "{{ config_zigbee_bindings_timeout | default(config_zigbee_bindings_timeout__default) if config_zigbee_bindings_timeout__default is defined else config_zigbee_bindings_timeout | default(omit) }}"
+    config_zigbee_bindings_bindings: "{{ config_zigbee_bindings_bindings | default(config_zigbee_bindings_bindings__default) if config_zigbee_bindings_bindings__default is defined else config_zigbee_bindings_bindings | default(omit) }}"
+    config_zigbee_bindings_apply: "{{ config_zigbee_bindings_apply | default(config_zigbee_bindings_apply__default) if config_zigbee_bindings_apply__default is defined else config_zigbee_bindings_apply | default(omit) }}"
+    config_zigbee_bindings_prune: "{{ config_zigbee_bindings_prune | default(config_zigbee_bindings_prune__default) if config_zigbee_bindings_prune__default is defined else config_zigbee_bindings_prune | default(omit) }}"
+    config_zigbee_bindings_max_passes: "{{ config_zigbee_bindings_max_passes | default(config_zigbee_bindings_max_passes__default) if config_zigbee_bindings_max_passes__default is defined else config_zigbee_bindings_max_passes | default(omit) }}"
+    config_zigbee_bindings_pass_delay: "{{ config_zigbee_bindings_pass_delay | default(config_zigbee_bindings_pass_delay__default) if config_zigbee_bindings_pass_delay__default is defined else config_zigbee_bindings_pass_delay | default(omit) }}"
+    config_zigbee_bindings_tries: "{{ config_zigbee_bindings_tries | default(config_zigbee_bindings_tries__default) if config_zigbee_bindings_tries__default is defined else config_zigbee_bindings_tries | default(omit) }}"
+    config_zigbee_bindings_ha_config_dir: "{{ config_zigbee_bindings_ha_config_dir | default(config_zigbee_bindings_ha_config_dir__default) if config_zigbee_bindings_ha_config_dir__default is defined else config_zigbee_bindings_ha_config_dir | default(omit) }}"
+  when: not (_config_zigbee_bindings__argspec_resolved | default(false))
+
+- name: Rebind the defaults on a repeat call, ignoring this role's own leftover facts
+  ansible.builtin.set_fact:
+    config_zigbee_bindings_action: "{{ config_zigbee_bindings_action__default if config_zigbee_bindings_action__default is defined else config_zigbee_bindings_action | default(omit) }}"
+    config_zigbee_bindings_timeout: "{{ config_zigbee_bindings_timeout__default if config_zigbee_bindings_timeout__default is defined else config_zigbee_bindings_timeout | default(omit) }}"
+    config_zigbee_bindings_bindings: "{{ config_zigbee_bindings_bindings__default if config_zigbee_bindings_bindings__default is defined else config_zigbee_bindings_bindings | default(omit) }}"
+    config_zigbee_bindings_apply: "{{ config_zigbee_bindings_apply__default if config_zigbee_bindings_apply__default is defined else config_zigbee_bindings_apply | default(omit) }}"
+    config_zigbee_bindings_prune: "{{ config_zigbee_bindings_prune__default if config_zigbee_bindings_prune__default is defined else config_zigbee_bindings_prune | default(omit) }}"
+    config_zigbee_bindings_max_passes: "{{ config_zigbee_bindings_max_passes__default if config_zigbee_bindings_max_passes__default is defined else config_zigbee_bindings_max_passes | default(omit) }}"
+    config_zigbee_bindings_pass_delay: "{{ config_zigbee_bindings_pass_delay__default if config_zigbee_bindings_pass_delay__default is defined else config_zigbee_bindings_pass_delay | default(omit) }}"
+    config_zigbee_bindings_tries: "{{ config_zigbee_bindings_tries__default if config_zigbee_bindings_tries__default is defined else config_zigbee_bindings_tries | default(omit) }}"
+    config_zigbee_bindings_ha_config_dir: "{{ config_zigbee_bindings_ha_config_dir__default if config_zigbee_bindings_ha_config_dir__default is defined else config_zigbee_bindings_ha_config_dir | default(omit) }}"
+  when: _config_zigbee_bindings__argspec_resolved | default(false)
+
+- name: Record that this role has resolved its options in this play
+  ansible.builtin.set_fact:
+    _config_zigbee_bindings__argspec_resolved: true

@@ -1,0 +1,60 @@
+---
+# THE MAGIC PROCESS. Generates a Home Assistant automation per source device that writes a missing
+# binding when the device's OWN wake signal arrives.
+#
+# WHY THIS LIVES IN HA AND NOT IN A PLAY. The write must land in the few seconds a dormant device
+# is awake, and the only thing that knows the device just woke is HA -- because the wake IS a
+# `zha_event`. A controller-side daemon would be polling for a window it cannot see. It also makes
+# the manual override free: pressing the button a few times is literally the trigger.
+#
+# GENERATED INTO A MARKED MANAGED BLOCK, BYTE-STABLE. A capture step that round-trips HA's YAML
+# back into source control would otherwise fight it: generated content that reordered itself or carried a timestamp would make
+# capture and generate overwrite each other indefinitely. Ordering is sorted, ids are derived from
+# the IEEE, and nothing varies run to run.
+#
+# NEVER .storage/ -- HA holds those files in memory and rewrites them on shutdown, so a play's edit
+# there is silently reverted.
+#
+# VERIFY BEFORE TRUSTING, on the HA version in use:
+#   * `response_variable` inside an AUTOMATION action. HA's docs demonstrate it in a script only.
+#     If unsupported, the automation calls a generated SCRIPT (which can take a response) and
+#     becomes a thin trigger. The template marks this clearly.
+#   * `max_exceeded: silent` -- cosmetic; drop it if it misbehaves. `mode: single` is the
+#     load-bearing part, because "press it a few times" makes concurrent runs NORMAL.
+
+- name: Assert the apply gate
+  ansible.builtin.assert:
+    that:
+      - config_zigbee_bindings_apply | bool
+    fail_msg: >-
+      install writes into Home Assistant's config and needs an explicit gate:
+      EXTRA='config_zigbee_bindings_action=install config_zigbee_bindings_apply=true'.
+    quiet: true
+
+- name: Group the declared bindings by source device
+  # One automation per DEVICE, not per binding: a single wake should land everything that device
+  # needs, and one automation per binding would fire several concurrent runs on one press.
+  ansible.builtin.set_fact:
+    _czb_by_device: >-
+      {{ _czb_declared | groupby('src') }}
+
+- name: Render the drain automations
+  ansible.builtin.template:
+    src: drain_automations.yaml.j2
+    dest: "{{ config_zigbee_bindings_ha_config_dir }}/zigbee_bindings_drain.yaml"
+    mode: "0644"
+  register: _czb_install_render
+  # Idempotent by construction: the template is byte-stable, so a re-run reports changed only when
+  # the DECLARATION changed. Nothing here claims a change it did not make.
+
+- name: Remind that HA must load the generated file
+  ansible.builtin.debug:
+    msg: >-
+      Wrote {{ config_zigbee_bindings_ha_config_dir }}/zigbee_bindings_drain.yaml
+      ({{ _czb_by_device | length }} automation(s)).
+      configuration.yaml must include it:
+        automation drain: !include zigbee_bindings_drain.yaml
+      That include is installation config and belongs to homeassistant_config, NOT to this
+      role -- which is also why this role never edits configuration.yaml itself.
+      Then validate (homeassistant_supervisor action=core_check) and only then restart Core:
+      a restart onto a config HA rejects leaves it down.

@@ -1,0 +1,11 @@
+# Offline test of the schedule-diff decision the ha_backup_config module makes, without contacting
+# a live Home Assistant.
+---
+dependency: { name: galaxy }
+driver: { name: default }
+platforms: [{ name: localhost }]
+provisioner:
+  name: ansible
+  inventory: { host_vars: { localhost: { ansible_connection: local } } }
+  playbooks: { converge: converge.yml, verify: verify.yml }
+verifier: { name: ansible }

@@ -1,0 +1,68 @@
+---
+# THE CLEAR STATE TO CHECK. Read-only, and EXITS 0 whether or not everything is converged.
+#
+# That last part is deliberate. A device being switched off, or its battery out, is a normal state
+# of the world -- not a failure. A status command that failed on it would be noise on every
+# schedule, and everyone would learn to ignore it. `converge` is the action that asserts; this one
+# informs.
+
+- name: Read the live state
+  ansible.builtin.include_tasks: _read.yml
+
+- name: Summarise
+  ansible.builtin.set_fact:
+    _czb_summary:
+      declared: "{{ _czb_declared | length }}"
+      devices: "{{ _czb_live | length }}"
+      # Counted from the per-device deltas, never from a task's .failed: every read above runs with
+      # a tolerated status code, which would pin .failed to False and make a verdict taken from it
+      # structurally unable to report a problem (FAILED-01).
+      confirmed: "{{ _czb_live | selectattr('readable') | map(attribute='delta.counts.present') | map('int') | sum }}"
+      pending: "{{ _czb_live | selectattr('readable') | map(attribute='delta.counts.missing') | map('int') | sum }}"
+      extra: "{{ _czb_live | selectattr('readable') | map(attribute='delta.counts.extra') | map('int') | sum }}"
+      unreadable: "{{ _czb_live | rejectattr('readable') | list | length }}"
+
+- name: Report
+  ansible.builtin.debug:
+    msg: >-
+      Zigbee bindings — {{ _czb_summary.declared }} declared across
+      {{ _czb_summary.devices }} device(s): {{ _czb_summary.confirmed }} CONFIRMED,
+      {{ _czb_summary.pending }} PENDING, {{ _czb_summary.extra }} undeclared,
+      {{ _czb_summary.unreadable }} device(s) unreadable.
+
+- name: Report each device
+  # Three distinct verdicts, and the distinction is the point:
+  #   CONFIRMED  - the device's own table holds every declared binding
+  #   PENDING    - read fine, bindings absent -> converge or wait for the drain automation
+  #   UNREADABLE - could not read at all. NOT the same as "has no bindings": if those were
+  #                conflated, sweep would re-open every confirmed binding on an offline device.
+  # `last_seen` is what turns "failed" into something actionable: press the button, versus check
+  # the IEEE.
+  ansible.builtin.debug:
+    msg: >-
+      {{ _verdict }}  {{ item.ieee }}
+      {{ '(' ~ (item.device.name | default('unknown device')) ~ ')' }}{%- if item.readable %}
+      — {{ item.delta.counts.present }}/{{ item.delta.counts.declared }} present{%- if item.delta.counts.missing > 0 %}; missing:
+      {{ item.delta.missing | map(attribute='cluster_name') | join(', ') }}{% endif %}{%- if item.delta.counts.extra > 0 %}; undeclared:
+      {{ item.delta.extra | map(attribute='cluster_name') | join(', ') }}{% endif %}{%- else %}
+      — could NOT read the binding table; this is not the same as "no bindings"{%- endif %}{%- if (item.device.last_seen | default('')) | length > 0 %}
+      [last seen {{ item.device.last_seen }}]{% endif %}{%- if item.readable and item.delta.counts.missing > 0 %}
+      -> press the device's button to apply now, or let the drain automation catch it{%- endif %}
+  loop: "{{ _czb_live }}"
+  loop_control:
+    label: "{{ item.ieee }}"
+  vars:
+    _verdict: >-
+      {{ 'UNREADABLE' if not item.readable
+         else ('CONFIRMED ' if item.delta.converged else 'PENDING   ') }}
+
+- name: Write the machine-readable report
+  ansible.builtin.copy:
+    content: "{{ {'summary': _czb_summary, 'devices': _czb_live, 'declared': _czb_declared} | to_nice_json }}"
+    dest: "{{ config_zigbee_bindings_report_path }}"
+    mode: "0644"
+  delegate_to: localhost
+  when: config_zigbee_bindings_report_path | default('', true) | length > 0
+  # A report file is an output, not a change to managed state -- claiming `changed` here would make
+  # every status run look like work and train everyone to ignore the counts.
+  changed_when: false

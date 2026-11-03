@@ -1,0 +1,123 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+from __future__ import annotations
+
+from ansible_devkit.argspec.models import ArgumentSpec, ArgumentSpecs, OptionSpec
+DEFAULT_AUTHOR = "Collection maintainers"
+
+argument_specs = ArgumentSpecs(
+    argument_specs={
+        "main": ArgumentSpec(
+            short_description="Deploy Home Assistant Lovelace dashboards in YAML mode, with a drift gate",
+            version_added="1.0",
+            author=DEFAULT_AUTHOR,
+            options={
+                "homeassistant_lovelace_dir": OptionSpec(
+                    type="str",
+                    required=False,
+                    default="/config",
+                    description=["HA's config directory inside the SSH add-on."],
+                ),
+                "homeassistant_lovelace_src": OptionSpec(
+                    type="str",
+                    required=True,
+                    description=[
+                        "Controller directory holding the dashboard YAML named in",
+                        "homeassistant_lovelace_dashboards. Installation config: set it in the play",
+                        "or inventory, never in this role.",
+                    ],
+                ),
+                "homeassistant_lovelace_subdir": OptionSpec(
+                    type="str",
+                    required=False,
+                    default="lovelace",
+                    description=[
+                        "Subdirectory under the config dir that the generated `filename:` entries",
+                        "point at. HA resolves `filename` relative to the config directory.",
+                    ],
+                ),
+                "homeassistant_lovelace_dashboards": OptionSpec(
+                    type="list",
+                    elements="dict",
+                    required=False,
+                    default=[],
+                    description=[
+                        "THE DASHBOARD REGISTRY — the single source of truth for what exists.",
+                        "",
+                        "One entry per dashboard, and this list drives BOTH the YAML files that get",
+                        "deployed AND the `lovelace:` block rendered for configuration.yaml. Keeping",
+                        "the two in separate hand-maintained places is how a dashboard ends up on",
+                        "disk but not in the sidebar (or the reverse).",
+                        "",
+                        "Each entry: {url_path, file, title, icon} plus optional show_in_sidebar",
+                        "(default true). `url_path` is the URL and the dashboards: key; `file` is",
+                        "relative to homeassistant_lovelace_subdir. Empty by default: which",
+                        "dashboards exist is installation config.",
+                        "",
+                        'The DEFAULT dashboard (sidebar "Overview") is deliberately NOT in this list:',
+                        "HA reads it from the fixed path <config>/ui-lovelace.yaml, so it is owned by",
+                        "homeassistant_config instead.",
+                    ],
+                ),
+                "homeassistant_lovelace_apply": OptionSpec(
+                    type="bool",
+                    required=False,
+                    default=False,
+                    description=[
+                        "GENERATE-DON'T-APPLY: default reports the diff and writes nothing."
+                    ],
+                ),
+                "homeassistant_lovelace_protect": OptionSpec(
+                    type="bool",
+                    required=False,
+                    default=True,
+                    description=[
+                        "Refuse to overwrite a dashboard whose live copy differs from what the source",
+                        "last deployed.",
+                        "",
+                        "YAML mode disables the UI editor, so drift SHOULD be impossible — but the",
+                        "vscode add-on, a direct SSH edit or a hand-run `ha` command can all still",
+                        "write these files, and an unconditional `copy` would silently discard that",
+                        "work. Set false to overwrite anyway (e.g. deliberately reverting a hand-edit",
+                        "on the box).",
+                    ],
+                ),
+                "homeassistant_lovelace_resources": OptionSpec(
+                    type="list",
+                    elements="dict",
+                    required=False,
+                    default=[],
+                    description=[
+                        "Custom-card resources, as {url: /local/<card>.js, type: module}. Declared",
+                        "here because YAML mode ignores .storage/lovelace_resources entirely —",
+                        "anything omitted stops loading and its cards render as an error box. Which",
+                        "cards are installed is installation config, so the default is none.",
+                    ],
+                ),
+                "homeassistant_lovelace_include": OptionSpec(
+                    type="str",
+                    required=False,
+                    default="lovelace.yaml",
+                    description=[
+                        "Where the generated `lovelace:` block is written. It is INCLUDED from",
+                        "configuration.yaml rather than injected into it, so the two roles never",
+                        "edit the same file and a dashboard change does not have to touch (or",
+                        "restart via) the config role at all.",
+                    ],
+                ),
+                "homeassistant_lovelace_prune": OptionSpec(
+                    type="bool",
+                    required=False,
+                    default=False,
+                    description=[
+                        "Delete dashboard files on the box that are no longer in the registry.",
+                        "",
+                        "Deregistering removes a dashboard from HA immediately, but the FILE stays —",
+                        'harmless to HA, and exactly the kind of leftover that later reads as "is',
+                        'this live?". Off by default because it deletes; the report names what',
+                        "WOULD go either way.",
+                    ],
+                ),
+            },
+        )
+    }
+)

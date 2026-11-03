@@ -1,0 +1,53 @@
+---
+# AUTO-GENERATED defaults file — DO NOT EDIT.
+#
+# Source of truth: roles/homeassistant_config/meta/argument_specs.py
+# Regenerate:      venv/bin/python tools/argspec/cli.py x generate homeassistant_config
+#
+# Edits here are silently overwritten on the next generation. To change a value or its
+# documentation, change the OptionSpec in the source file above — descriptions there
+# are emitted as the comments in this file.
+# Entrypoint:      main
+
+# Where HA's configuration lives inside the SSH add-on.
+homeassistant_config_dir__default: /config
+
+# The files this role OWNS. Anything not listed is left alone — HA writes
+# plenty of state into /config that must not be reverted from a source copy
+# (see .storage, the recorder DB, and the UI-managed registries).
+# ui-lovelace.yaml is the DEFAULT dashboard (sidebar 'Overview'): in YAML
+# mode HA reads it from this fixed path at the config root, because
+# `filename` is a key on `dashboards:` entries only.
+homeassistant_config_files__default:
+  - configuration.yaml
+  - ui-lovelace.yaml
+  - automations.yaml
+  - scripts.yaml
+  - scenes.yaml
+
+# Directories copied wholesale.
+homeassistant_config_dirs__default:
+  - templates
+  - blueprints
+
+# GENERATE-DON'T-APPLY. Default reports the diff and writes nothing.
+homeassistant_config_apply__default: false
+
+# Refuse to overwrite a file whose live copy differs from the source copy
+# this role last deployed.
+# These files are edited through HA's UI by design — the automation editor
+# rewrites automations.yaml on every save — so an unconditional copy
+# silently DISCARDS real work and reports success while doing it.
+# The source copy IS the record of what was last deployed: capturing the
+# live files back into it is the only sanctioned way it moves relative to
+# the box. So live != source means someone wrote to the box outside this
+# role.
+# Set false to overwrite anyway — i.e. to deliberately revert a live edit.
+# Mirrors homeassistant_lovelace_protect; the two roles must not disagree
+# about whether clobbering live edits is acceptable.
+homeassistant_config_protect__default: true
+
+# Restart HA Core after a change. Off by default: a restart drops every
+# automation mid-run and takes ~40s, so it should be a decision rather
+# than a side effect.
+homeassistant_config_restart__default: false

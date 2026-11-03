@@ -1,0 +1,62 @@
+---
+# AUTO-GENERATED defaults file — DO NOT EDIT.
+#
+# Source of truth: roles/homeassistant_lovelace/meta/argument_specs.py
+# Regenerate:      venv/bin/python tools/argspec/cli.py x generate homeassistant_lovelace
+#
+# Edits here are silently overwritten on the next generation. To change a value or its
+# documentation, change the OptionSpec in the source file above — descriptions there
+# are emitted as the comments in this file.
+# Entrypoint:      main
+
+# HA's config directory inside the SSH add-on.
+homeassistant_lovelace_dir__default: /config
+
+# Subdirectory under the config dir that the generated `filename:` entries
+# point at. HA resolves `filename` relative to the config directory.
+homeassistant_lovelace_subdir__default: lovelace
+
+# THE DASHBOARD REGISTRY — the single source of truth for what exists.
+# One entry per dashboard, and this list drives BOTH the YAML files that get
+# deployed AND the `lovelace:` block rendered for configuration.yaml. Keeping
+# the two in separate hand-maintained places is how a dashboard ends up on
+# disk but not in the sidebar (or the reverse).
+# Each entry: {url_path, file, title, icon} plus optional show_in_sidebar
+# (default true). `url_path` is the URL and the dashboards: key; `file` is
+# relative to homeassistant_lovelace_subdir. Empty by default: which
+# dashboards exist is installation config.
+# The DEFAULT dashboard (sidebar "Overview") is deliberately NOT in this list:
+# HA reads it from the fixed path <config>/ui-lovelace.yaml, so it is owned by
+# homeassistant_config instead.
+homeassistant_lovelace_dashboards__default: []
+
+# GENERATE-DON'T-APPLY: default reports the diff and writes nothing.
+homeassistant_lovelace_apply__default: false
+
+# Refuse to overwrite a dashboard whose live copy differs from what the source
+# last deployed.
+# YAML mode disables the UI editor, so drift SHOULD be impossible — but the
+# vscode add-on, a direct SSH edit or a hand-run `ha` command can all still
+# write these files, and an unconditional `copy` would silently discard that
+# work. Set false to overwrite anyway (e.g. deliberately reverting a hand-edit
+# on the box).
+homeassistant_lovelace_protect__default: true
+
+# Custom-card resources, as {url: /local/<card>.js, type: module}. Declared
+# here because YAML mode ignores .storage/lovelace_resources entirely —
+# anything omitted stops loading and its cards render as an error box. Which
+# cards are installed is installation config, so the default is none.
+homeassistant_lovelace_resources__default: []
+
+# Where the generated `lovelace:` block is written. It is INCLUDED from
+# configuration.yaml rather than injected into it, so the two roles never
+# edit the same file and a dashboard change does not have to touch (or
+# restart via) the config role at all.
+homeassistant_lovelace_include__default: lovelace.yaml
+
+# Delete dashboard files on the box that are no longer in the registry.
+# Deregistering removes a dashboard from HA immediately, but the FILE stays —
+# harmless to HA, and exactly the kind of leftover that later reads as "is
+# this live?". Off by default because it deletes; the report names what
+# WOULD go either way.
+homeassistant_lovelace_prune__default: false

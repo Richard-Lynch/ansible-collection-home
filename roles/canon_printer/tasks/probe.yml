@@ -1,0 +1,13 @@
+---
+- name: Read the unauthenticated status
+  richard_lynch.home.canon_printer_settings:
+    host: "{{ canon_printer_host }}"
+    ca_cert: "{{ canon_printer_ca_cert | default(omit, true) }}"
+    status: true
+  register: _canon_printer_probe
+
+- name: Report
+  ansible.builtin.debug:
+    msg:
+      - "signal {{ _canon_printer_probe.status.g_signal_strength | default('?') }}%  link quality {{ _canon_printer_probe.status.g_link_quality | default('?') }}%"
+      - "state {{ _canon_printer_probe.status.g_err_msg_id | default('?') }}  firmware {{ _canon_printer_probe.status.g_data_firm_ver | default('?') }}"

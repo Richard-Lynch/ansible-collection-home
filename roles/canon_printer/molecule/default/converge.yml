@@ -1,0 +1,127 @@
+---
+# Each case runs the real role and records whether it was refused, and with what message.
+- name: Converge
+  hosts: localhost
+  gather_facts: false
+  vars:
+    canon_printer_host: printer.invalid
+    canon_printer_password: molecule-fake-password
+    _cases: {}
+  tasks:
+    - name: CASE no_ca — read without a pinned CA must be refused
+      block:
+        - ansible.builtin.include_role:
+            name: canon_printer
+          vars:
+            canon_printer_action: read
+            canon_printer_ca_cert: ""
+        - ansible.builtin.set_fact:
+            _cases: "{{ _cases | combine({'no_ca': 'NOT REFUSED'}) }}"
+      rescue:
+        - ansible.builtin.set_fact:
+            _cases: "{{ _cases | combine({'no_ca': ansible_failed_result.msg | default('')}) }}"
+
+    - name: CASE empty_settings — converge with nothing declared must be refused
+      block:
+        - ansible.builtin.include_role:
+            name: canon_printer
+          vars:
+            canon_printer_action: converge
+            canon_printer_ca_cert: /nonexistent/ca.crt
+            canon_printer_settings: {}
+        - ansible.builtin.set_fact:
+            _cases: "{{ _cases | combine({'empty_settings': 'NOT REFUSED'}) }}"
+      rescue:
+        - ansible.builtin.set_fact:
+            _cases: "{{ _cases | combine({'empty_settings': ansible_failed_result.msg | default('')}) }}"
+
+    - name: CASE bad_name — an illegal printer name is rejected by validation, before any connection
+      block:
+        - ansible.builtin.include_role:
+            name: canon_printer
+          vars:
+            canon_printer_action: converge
+            canon_printer_ca_cert: /nonexistent/ca.crt
+            canon_printer_settings:
+              printer_name: {PRINTER_NAME: "-printer"}
+        - ansible.builtin.set_fact:
+            _cases: "{{ _cases | combine({'bad_name': 'NOT REFUSED'}) }}"
+      rescue:
+        - ansible.builtin.set_fact:
+            _cases: "{{ _cases | combine({'bad_name': ansible_failed_result.msg | default('')}) }}"
+
+    - name: CASE read_only_group — writing ipv4 is refused by the module
+      block:
+        - ansible.builtin.include_role:
+            name: canon_printer
+          vars:
+            canon_printer_action: converge
+            canon_printer_ca_cert: /nonexistent/ca.crt
+            canon_printer_settings:
+              ipv4: {IPV4_MODE: MANUAL}
+        - ansible.builtin.set_fact:
+            _cases: "{{ _cases | combine({'read_only_group': 'NOT REFUSED'}) }}"
+      rescue:
+        - ansible.builtin.set_fact:
+            _cases: "{{ _cases | combine({'read_only_group': ansible_failed_result.msg | default('')}) }}"
+
+    - name: CASE job_no_ca — a maintenance job without a pinned CA must be refused
+      block:
+        - ansible.builtin.include_role:
+            name: canon_printer
+          vars:
+            canon_printer_action: nozzle_check
+            canon_printer_ca_cert: ""
+        - ansible.builtin.set_fact:
+            _cases: "{{ _cases | combine({'job_no_ca': 'NOT REFUSED'}) }}"
+      rescue:
+        - ansible.builtin.set_fact:
+            _cases: "{{ _cases | combine({'job_no_ca': ansible_failed_result.msg | default('')}) }}"
+
+    - name: CASE bad_pattern — a cleaning pattern the device does not take is refused
+      block:
+        - ansible.builtin.include_role:
+            name: canon_printer
+          vars:
+            canon_printer_action: cleaning
+            canon_printer_ca_cert: /nonexistent/ca.crt
+            canon_printer_cleaning_pattern: BLACK
+        - ansible.builtin.set_fact:
+            _cases: "{{ _cases | combine({'bad_pattern': 'NOT REFUSED'}) }}"
+      rescue:
+        - ansible.builtin.set_fact:
+            _cases: "{{ _cases | combine({'bad_pattern': ansible_failed_result.msg | default('')}) }}"
+
+    # The two PLAN cases run against printer.invalid: a plan that tried to reach the printer would
+    # fail on DNS, so success here proves nothing was sent.
+    - name: CASE plan_power_off — without canon_printer_apply, power_off only reports the plan
+      block:
+        - ansible.builtin.include_role:
+            name: canon_printer
+          vars:
+            canon_printer_action: power_off
+        - ansible.builtin.set_fact:
+            _cases: "{{ _cases | combine({'plan_power_off': _canon_printer_job_result.plan | default('NO PLAN')}) }}"
+      rescue:
+        - ansible.builtin.set_fact:
+            _cases: "{{ _cases | combine({'plan_power_off': 'FAILED: ' ~ (ansible_failed_result.msg | default(''))}) }}"
+
+    - name: CASE plan_cleaning — without canon_printer_apply, cleaning only reports the plan
+      block:
+        - ansible.builtin.include_role:
+            name: canon_printer
+          vars:
+            canon_printer_action: cleaning
+            canon_printer_ca_cert: /nonexistent/ca.crt
+            canon_printer_cleaning_pattern: ALL
+        - ansible.builtin.set_fact:
+            _cases: "{{ _cases | combine({'plan_cleaning': _canon_printer_job_result.plan | default('NO PLAN')}) }}"
+      rescue:
+        - ansible.builtin.set_fact:
+            _cases: "{{ _cases | combine({'plan_cleaning': 'FAILED: ' ~ (ansible_failed_result.msg | default(''))}) }}"
+
+    - name: Save results for verify
+      ansible.builtin.copy:
+        content: "{{ _cases | to_nice_json }}"
+        dest: /tmp/molecule_canon_printer_results.json
+        mode: "0644"

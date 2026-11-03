@@ -1,0 +1,125 @@
+---
+- name: Resolve declared options over their generated defaults
+  ansible.builtin.include_tasks: _resolve_defaults.yml
+
+- name: Cast the apply gate into a private fact
+  ansible.builtin.set_fact:
+    # A DIFFERENT NAME, not the public one. `set_fact` cannot override an extra-var: `-e
+    # homeassistant_secrets_apply=true` outranks it, so the `| bool` here would be silently
+    # discarded and every `when:` would see the STRING "true" -- which Ansible rejects as
+    # "Conditionals must have a boolean result". Casting into a private fact is what actually
+    # applies the coercion.
+    _ha_secrets_apply: "{{ homeassistant_secrets_apply | bool }}"
+
+- name: Refuse to run with nothing to manage
+  # An empty list would otherwise write an empty managed block, which reads in a diff as "the block
+  # is managed and correct" while managing nothing at all.
+  ansible.builtin.assert:
+    that:
+      - "(homeassistant_secrets | length > 0) or (homeassistant_secrets_literal | length > 0)"
+    fail_msg: >-
+      homeassistant_secrets is empty. Pass the keys to manage, e.g. via the play's vars — this role
+      writes credentials and will not guess which ones.
+    quiet: true
+
+- name: Refuse an entry with no vault to read it from
+  ansible.builtin.assert:
+    that:
+      - "(item.vault | default(homeassistant_secrets_vault)) | length > 0"
+    fail_msg: >-
+      {{ item.key }} names no vault, and homeassistant_secrets_vault is empty. Set one or the other.
+    quiet: true
+  loop: "{{ homeassistant_secrets }}"
+  loop_control:
+    label: "{{ item.key }}"
+
+- name: Confirm the secrets file's directory really is Home Assistant's
+  ansible.builtin.stat:
+    path: "{{ homeassistant_secrets_path | dirname }}/.HA_VERSION"
+  register: _ha_marker
+
+- name: Assert the marker file exists
+  # Same guard as homeassistant_config: a wrong path would otherwise scatter CREDENTIALS into an
+  # unrelated file and report success.
+  ansible.builtin.assert:
+    that:
+      - "_ha_marker.stat.exists"
+    fail_msg: >-
+      {{ homeassistant_secrets_path | dirname }}/.HA_VERSION is missing, so this is not a Home
+      Assistant config directory. Refusing to write secrets into it.
+    quiet: true
+
+- name: Read each secret from 1Password
+  # onepassword_cached, never a bare `op` call: under desktop auth each bare call is a separate
+  # approval prompt, and this loop would issue one per key on every run.
+  ansible.builtin.set_fact:
+    _ha_secret_lines: >-
+      {{ _ha_secret_lines | default([])
+         + [item.key ~ ': "' ~ lookup('richard_lynch.common.onepassword_cached', item.item,
+                                      field=item.field,
+                                      vault=item.vault | default(homeassistant_secrets_vault)) ~ '"'] }}
+  loop: "{{ homeassistant_secrets }}"
+  loop_control:
+    label: "{{ item.key }}"
+  no_log: true
+
+- name: Render the non-secret literals
+  ansible.builtin.set_fact:
+    _ha_literal_lines: >-
+      {{ homeassistant_secrets_literal | dict2items
+         | map(attribute='key') | zip(homeassistant_secrets_literal | dict2items | map(attribute='value'))
+         | map('join', ': ') | list }}
+
+- name: Back up the secrets file before touching it
+  ansible.builtin.copy:
+    src: "{{ homeassistant_secrets_path }}"
+    dest: "{{ homeassistant_secrets_path }}.{{ ansible_date_time.iso8601_basic_short }}.bak"
+    remote_src: true
+    mode: "0600"
+  when: _ha_secrets_apply
+
+- name: Manage the role-owned block in secrets.yaml
+  # A MARKED BLOCK, not a whole-file template. HA's secrets.yaml may hold keys added by hand or by
+  # an integration's setup flow; templating the file would delete them silently. The markers bound
+  # exactly what this role owns and leave the rest untouched.
+  ansible.builtin.blockinfile:
+    path: "{{ homeassistant_secrets_path }}"
+    marker: "# {mark} ANSIBLE-MANAGED — homeassistant_secrets (do not edit between these lines)"
+    block: "{{ (_ha_literal_lines + (_ha_secret_lines | default([]))) | join('\n') }}"
+    create: false
+    mode: "0600"
+  # check_mode when not applying, so a dry run DIFFS the change rather than skipping the task and
+  # reporting "nothing to do" regardless of the real state.
+  check_mode: "{{ not _ha_secrets_apply }}"
+  register: _ha_secrets_block
+  no_log: true
+
+- name: Report
+  # Names the KEYS only. `no_log` above hides the values; this makes the run auditable without
+  # putting a credential in the log, which is the whole reason the block task is silent.
+  ansible.builtin.debug:
+    msg:
+      - "{{ 'WROTE' if _ha_secrets_apply else 'DRY RUN — nothing written' }}: {{ homeassistant_secrets_path }}"
+      - "Keys managed: {{ ((homeassistant_secrets_literal.keys() | list) + (homeassistant_secrets | map(attribute='key') | list)) | join(', ') }}"
+      - "Block changed: {{ _ha_secrets_block.changed }}"
+      - "{{ '' if _ha_secrets_apply else \"Re-run with homeassistant_secrets_apply=true to write.\" }}"
+
+- name: Verify Home Assistant can still load its configuration
+  # The point of writing these at all is that configuration.yaml references them. HA's own verdict
+  # is the only thing that proves the !secret lookups now resolve — a successful file write does
+  # not.
+  richard_lynch.home.homeassistant_supervisor:
+    action: core_check
+    apply: true
+  register: _ha_check
+  when: _ha_secrets_apply
+
+- name: Assert the configuration still validates
+  ansible.builtin.assert:
+    that:
+      - "not _ha_check.failed | default(false)"
+    fail_msg: >-
+      Secrets were written but Home Assistant now fails its own config check. The previous
+      secrets.yaml is at {{ homeassistant_secrets_path }}.*.bak on the target.
+    quiet: true
+  when: _ha_secrets_apply

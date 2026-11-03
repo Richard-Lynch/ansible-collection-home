@@ -1,0 +1,18 @@
+---
+# Dispatch. READ BY DEFAULT: a bare run of this role performs `status`, which changes nothing.
+#
+# Shape borrowed from richard_lynch.home.homeassistant_supervisor ("This is a READ module by default"):
+# reads need no gate, writes need an explicit one, and the gate is checked inside the writing
+# entrypoint rather than here so the dry run can still report what it WOULD do.
+
+- name: Resolve declared options over their generated defaults
+  ansible.builtin.include_tasks: _resolve_defaults.yml
+
+- name: Enforce the constraints Ansible's argspec validator cannot
+  ansible.builtin.include_tasks: _argspec_guards.yml
+
+- name: Preflight — declaration, service availability, device identity
+  ansible.builtin.include_tasks: _preflight.yml
+
+- name: "Run: {{ config_zigbee_bindings_action }}"
+  ansible.builtin.include_tasks: "{{ config_zigbee_bindings_action }}.yml"

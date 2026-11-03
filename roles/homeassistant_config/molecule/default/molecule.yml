@@ -1,0 +1,40 @@
+# Offline scenario — exercises the role's REAL drift gate (tasks/_drift_gate.yml) against two
+# temp directories standing in for /config and the repo source.
+#
+# NO HOME ASSISTANT IS TOUCHED. The gate runs BEFORE the tar backup, the copy and the Supervisor
+# core_check, so entering at `tasks_from: _drift_gate` reaches the whole of the code under test
+# and none of the I/O. Those halves need a live Home Assistant.
+#
+# BOTH DIRECTIONS, because a guard with only a passing test proves nothing:
+# case 1 must FAIL (a file edited on the box), case 2 must PASS (the same setup, identical files).
+---
+dependency:
+  name: galaxy
+driver:
+  name: default
+platforms:
+  - name: localhost
+provisioner:
+  name: ansible
+  # Molecule runs from the scenario directory, so a project ansible.cfg roles_path does not
+  # resolve. Pointed at the roles directory so converge.yml can include_role the role under test —
+  # which is what makes this a test of the role's own code rather than a re-derivation of it.
+  env:
+    ANSIBLE_ROLES_PATH: "${MOLECULE_PROJECT_DIRECTORY}/../"
+    # BOTH trees: the installed dependencies (collections.galaxy/) and the tree holding this
+    # role's own collection. Molecule does not inherit ansible.cfg, and a dev venv that bundles
+    # the collections in site-packages would hide the omission.
+    ANSIBLE_COLLECTIONS_PATH: "${MOLECULE_PROJECT_DIRECTORY}/../../collections.galaxy:${MOLECULE_PROJECT_DIRECTORY}/../../../../.."
+  inventory:
+    host_vars:
+      localhost:
+        ansible_connection: local
+  playbooks:
+    converge: converge.yml
+    verify: verify.yml
+verifier:
+  name: ansible
+scenario:
+  # No idempotence step: converge deliberately provokes the gate and catches it with block/rescue,
+  # so a second converge re-raises by design.
+  test_sequence: [syntax, converge, verify]

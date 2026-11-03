@@ -1,0 +1,139 @@
+---
+# THE ONE WAY THIS ROLE LEARNS THE TRUTH. Every action includes this file, so there is exactly one
+# read path and a fix to it fixes every caller.
+#
+# Sets:
+#   _czb_devices_raw  -- zha_devices response (ieee, name, model, last_seen, available ...)
+#   _czb_live         -- per source device: {ieee, response, delta}
+#
+# `?return_response` IS MANDATORY and its absence is not subtle: HA returns 400 when a service
+# that must return data is called without it, and 400 again when it is passed to a service that
+# returns none. So it goes on these reads and must NOT go on bind_ieee.
+
+- name: Read every ZHA device
+  ansible.builtin.uri:
+    url: "{{ config_zigbee_bindings_ha_base_url }}/api/services/zha_toolkit/zha_devices?return_response"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ config_zigbee_bindings_ha_token }}"
+      Content-Type: application/json
+    body_format: json
+    body: {}
+    timeout: "{{ config_zigbee_bindings_timeout | int }}"
+    status_code: [200]
+  register: _czb_devices_raw
+  no_log: true
+  changed_when: false
+
+- name: Assert the device list was actually parsed
+  # `body_format: json` sets the REQUEST type only -- it does NOT make uri parse a reply served as
+  # text/plain, in which case .json is absent and `| default([])` would quietly become "there are
+  # no devices". An empty-but-parsed list is legitimate; an unparsed one is not.
+  ansible.builtin.assert:
+    that:
+      - _czb_devices_raw.json is defined
+      - _czb_devices_raw.json.service_response is defined
+    fail_msg: >-
+      zha_devices returned a body that could not be parsed as JSON (content-type was
+      '{{ _czb_devices_raw.content_type | default("unknown") }}'). Treating this as "no devices"
+      would be wrong, so the run stops here.
+    quiet: true
+
+- name: Extract the device inventory
+  ansible.builtin.set_fact:
+    _czb_devices: "{{ _czb_devices_raw.json.service_response.devices | default([]) }}"
+
+- name: Index the device inventory by NORMALISED ieee
+  # A second copy with `ieee` normalised, so every later lookup compares like with like. Matching
+  # a declaration's 00:11:... against a reported 0x001122... silently finds nothing and yields an
+  # empty device dict -- which would make `status` claim "never seen" for a healthy device and
+  # send someone to check its battery.
+  #
+  # Done in a tested filter rather than a Jinja zip/map chain: the chain that does this is long,
+  # its failure mode is a silently misshapen list, and a molecule scenario can only test it by
+  # re-deriving it.
+  ansible.builtin.set_fact:
+    _czb_devices_normalised: "{{ _czb_devices | richard_lynch.home.zigbee_devices_by_ieee }}"
+
+- name: Note the source devices this run cares about
+  ansible.builtin.set_fact:
+    # unique because one device typically carries several declared bindings (one per cluster);
+    # one wake window should land all of them, so reads and writes are grouped per device.
+    _czb_sources: "{{ _czb_declared | map(attribute='src') | unique | list }}"
+
+- name: Assert every declared source device is known to ZHA
+  # A typo'd IEEE otherwise produces a bind that fails forever and reads as "the device is
+  # asleep" -- indistinguishable from the normal case, which is what makes it expensive.
+  ansible.builtin.assert:
+    that:
+      - "(_czb_sources | reject('in', _czb_known_ieees) | list) | length == 0"
+    fail_msg: >-
+      Declared source device(s) not present in ZHA:
+      {{ _czb_sources | reject('in', _czb_known_ieees) | list | join(', ') }}.
+      Check the IEEE against `config_zigbee_bindings_action=probe` output -- a device that has
+      never joined, or a mistyped address, both look like this.
+    success_msg: "Every declared source device is known to ZHA."
+  vars:
+    # NORMALISED, not `| lower`: zha_devices may report an IEEE as 0x0011223344556677, and
+    # that lowercased still does not equal 00:11:22:33:44:55:66:77 -- the assert would then
+    # reject every valid device. Verified both spellings normalise equal.
+    _czb_known_ieees: "{{ _czb_devices_normalised | map(attribute='ieee') | list }}"
+  when: _czb_sources | length > 0
+
+- name: Read the live binding table for each declared source device
+  ansible.builtin.uri:
+    url: "{{ config_zigbee_bindings_ha_base_url }}/api/services/zha_toolkit/binds_get?return_response"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ config_zigbee_bindings_ha_token }}"
+      Content-Type: application/json
+    body_format: json
+    body:
+      ieee: "{{ item }}"
+      tries: "{{ config_zigbee_bindings_tries | int }}"
+      # fail_exception TRUE on a READ: here a failure genuinely means "I could not read the
+      # table", which must be loud. On a WRITE it is set false, because a write to a sleeping
+      # device failing is the expected case and must not abort the convergence loop.
+      fail_exception: true
+    timeout: "{{ config_zigbee_bindings_timeout | int }}"
+    # 500 is accepted so an unreachable device does not abort a multi-device run; the per-device
+    # verdict below is computed from the BODY, never from this task's status or .failed.
+    status_code: [200, 500]
+  loop: "{{ _czb_sources }}"
+  loop_control:
+    label: "{{ item }}"
+  register: _czb_binds_raw
+  no_log: true
+  changed_when: false
+
+- name: Clear the previous read before accumulating this one
+  # MANDATORY, because this file is included REPEATEDLY -- once per convergence pass, plus the
+  # final verdict read. The accumulator below is `_czb_live | default([]) + [...]`, so without this
+  # reset the second read APPENDS to the first: the device list doubles every pass and the verdict
+  # is computed over a mix of stale and fresh entries, with the stale ones still showing the
+  # bindings as missing. That would make a successful converge report failure.
+  ansible.builtin.set_fact:
+    _czb_live: []
+
+- name: Build the per-device live state and delta
+  # The delta is computed by the role's own tested filter, which parses BOTH vocabularies
+  # (binds_get's hex cluster ids, the declaration's names) before comparing. A plain set
+  # difference here would find nothing in common and report every binding missing forever.
+  #
+  # `readable` is the honest three-way distinction: converged / not yet / could not read. A table
+  # that could not be read must never present as an empty one, or sweep would re-open every
+  # confirmed binding on a merely-offline device.
+  ansible.builtin.set_fact:
+    _czb_live: >-
+      {{ _czb_live | default([]) + [{
+        'ieee': item.item,
+        'readable': (item.status == 200 and (item.json.service_response.result is defined)),
+        'delta': (
+          (_czb_declared | selectattr('src', 'equalto', item.item) | list)
+          | richard_lynch.home.zigbee_delta_normalised(item.json, item.item)
+        ) if (item.status == 200 and (item.json.service_response.result is defined)) else none,
+        'device': (_czb_devices_normalised | selectattr('ieee', 'equalto', item.item) | first | default({})),
+      }] }}
+  loop: "{{ _czb_binds_raw.results }}"
+  loop_control:
+    label: "{{ item.item }}"

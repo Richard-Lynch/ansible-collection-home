@@ -1,0 +1,42 @@
+---
+# AUTO-GENERATED argument spec — DO NOT EDIT.
+#
+# Source of truth: roles/homeassistant_backup/meta/argument_specs.py
+# Regenerate:      venv/bin/python tools/argspec/cli.py x generate homeassistant_backup
+#
+# Edits here are silently overwritten on the next generation. To change a value or its
+# documentation, change the OptionSpec in the source file above — descriptions there
+# are emitted as the comments in this file.
+argument_specs:
+  main:
+    short_description: Set Home Assistant's native backup schedule via the websocket API
+    version_added: '1.0'
+    author: Collection maintainers
+    options:
+      homeassistant_backup_base_url:
+        description:
+          - 'Home Assistant base URL (http://host:8123). Installation config: set it in inventory, never in this role.'
+        type: str
+        required: true
+      homeassistant_backup_token:
+        description:
+          - Home Assistant long-lived access token, resolved from a secret store by the caller. Never logged.
+        type: str
+        required: true
+        no_log: true
+      homeassistant_backup_recurrence:
+        description:
+          - Backup schedule recurrence (daily/weekly/never).
+        type: str
+        required: false
+      homeassistant_backup_time:
+        description:
+          - Daily backup time HH:MM (appliance local).
+        type: str
+        required: false
+      homeassistant_backup_run_now:
+        description:
+          - Trigger an automatic backup immediately after configuring.
+        type: bool
+        required: false
+        default: false

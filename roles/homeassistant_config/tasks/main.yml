@@ -1,0 +1,140 @@
+---
+- name: Resolve declared options over their generated defaults
+  # GENERATED from meta/argument_specs.py. Carries the re-entry guard (RESOLVE-01) that a
+  # hand-written `set_fact` block does not: a role included twice in one play would otherwise
+  # read its own leftover facts on the second call.
+  ansible.builtin.include_tasks: _resolve_defaults.yml
+
+- name: Cast the gate booleans into private facts
+  ansible.builtin.set_fact:
+    # PRIVATE names for the three booleans: `set_fact` cannot override an extra-var, so
+    # `-e homeassistant_config_apply=true` would keep the STRING "true" and every `when:` would
+    # fail with "Conditionals must have a boolean result". Casting into a private fact is what
+    # makes the coercion stick.
+    _ha_cfg_apply: "{{ homeassistant_config_apply | bool }}"
+    _ha_cfg_restart: "{{ homeassistant_config_restart | bool }}"
+    _ha_cfg_protect: "{{ homeassistant_config_protect | bool }}"
+
+- name: Confirm this is really a Home Assistant config directory
+  # A wrong `homeassistant_config_dir` would otherwise scatter yaml into an unrelated path and
+  # report success. .HA_VERSION is written by HA itself and exists nowhere else.
+  ansible.builtin.stat:
+    path: "{{ homeassistant_config_dir }}/.HA_VERSION"
+  register: _ha_marker
+
+- name: Assert the marker file exists
+  ansible.builtin.assert:
+    that:
+      - "_ha_marker.stat.exists"
+    fail_msg: >-
+      {{ homeassistant_config_dir }}/.HA_VERSION is missing, so this does not look like a Home
+      Assistant config directory. Refusing to write into it.
+    quiet: true
+
+- name: Find which owned files actually exist on the target
+  # HAOS ships BUSYBOX tar, which has no --ignore-failed-read: a named file that does not exist is
+  # a fatal error, not a warning. So the list is filtered HERE rather than asking tar to be lenient:
+  # the first deploy of an owned file that does not exist on the box yet must not stop the backup.
+  # A backup must not refuse to run because there is nothing yet to back up.
+  ansible.builtin.stat:
+    path: "{{ homeassistant_config_dir }}/{{ item }}"
+  loop: "{{ homeassistant_config_files }}"
+  loop_control:
+    label: "{{ item }}"
+  register: _ha_present
+
+- name: Detect drift, and refuse to overwrite a live edit
+  # Kept in its own file so the molecule scenario can enter at the gate and prove it
+  # fires — and that it does NOT fire on an undrifted file — without a live HA.
+  ansible.builtin.include_tasks: _drift_gate.yml
+
+- name: Back up the live config before touching it
+  # Taken on the TARGET, every run, before any write. The source copy proves what was INTENDED; this
+  # proves what was actually there -- and those differ exactly when it matters, because HA rewrites
+  # some of these files itself from the UI.
+  #
+  # The file list is SPLATTED into argv, never joined: `join(' ')` would make every name a SINGLE
+  # argv element, and tar would look for one file literally called "configuration.yaml
+  # automations.yaml ..." and fail.
+  ansible.builtin.command:
+    argv: "{{ ['tar', '-czf', _ha_backup_path, '-C', homeassistant_config_dir] + _ha_existing }}"
+  vars:
+    _ha_backup_path: "{{ homeassistant_config_dir }}/.ansible-backup-{{ ansible_date_time.iso8601_basic_short }}.tar.gz"
+    _ha_existing: "{{ _ha_present.results | selectattr('stat.exists') | map(attribute='item') | list }}"
+  register: _ha_backup
+  changed_when: _ha_backup.rc == 0
+  when:
+    - _ha_cfg_apply
+    - _ha_present.results | selectattr('stat.exists') | list | length > 0
+
+- name: Deploy the owned config files
+  ansible.builtin.copy:
+    src: "{{ homeassistant_config_src }}/{{ item }}"
+    dest: "{{ homeassistant_config_dir }}/{{ item }}"
+    mode: "0644"
+    backup: true
+  loop: "{{ homeassistant_config_files }}"
+  register: _ha_files
+  # NOT gated on `apply`. Gating the copy itself would make `--check --diff` skip every task and
+  # report "nothing to do" whether the live config matched the source or differed wildly -- a dry
+  # run that cannot preview is worse than none, because it reads as a clean result.
+  #
+  # `check_mode: true` when not applying makes Ansible compute and DIFF the change without writing
+  # it, which is what a preview should mean.
+  check_mode: "{{ not _ha_cfg_apply }}"
+  diff: true
+
+- name: Deploy the owned directories
+  ansible.builtin.copy:
+    src: "{{ homeassistant_config_src }}/{{ item }}/"
+    dest: "{{ homeassistant_config_dir }}/{{ item }}/"
+    mode: "0644"
+  loop: "{{ homeassistant_config_dirs }}"
+  register: _ha_dirs
+  check_mode: "{{ not _ha_cfg_apply }}"
+  diff: true
+
+- name: Report
+  # UNCONDITIONAL, deliberately. The drift line is the one thing a reader needs on BOTH paths: on
+  # the dry run because it is the warning, and on an apply because a run with protect=false has
+  # just overwritten the files it names and that must be on the record rather than inferred from
+  # the absence of a failure.
+  ansible.builtin.debug:
+    msg:
+      - "{{ 'DEPLOYED to' if _ha_cfg_apply else 'DRY RUN — nothing written to' }} {{ homeassistant_config_dir }}."
+      - "Files this role owns : {{ homeassistant_config_files | join(', ') }}"
+      - "Directories          : {{ homeassistant_config_dirs | join(', ') }}"
+      - "{{ 'Drift protection: OFF (homeassistant_config_protect=false)' if not _ha_cfg_protect else 'Drift protection: on' }}"
+      - "Drifted (live edited outside Ansible): {{ _ha_cfg_drifted | join(', ') or 'none' }}"
+      - "{{ 'CHANGED' if _ha_cfg_apply else 'WOULD CHANGE' }}: {{ _would | join(', ') if _would else 'nothing — live matches the source' }}"
+      - "{{ '' if _ha_cfg_apply else \"Re-run with homeassistant_config_apply=true to write.\" }}"
+  vars:
+    # Built as a var so the whole expression stays on one line each: a folded multi-line
+    # Jinja inside a list item is a YAML syntax error, not a formatting preference.
+    _would: "{{ (_ha_files.results | default([]) | selectattr('changed') | map(attribute='item') | list) + (_ha_dirs.results | default([]) | selectattr('changed')
+      | map(attribute='item') | list) }}"
+
+- name: Validate the configuration HA will actually load
+  # HA'S OWN VERDICT, not a yaml-parse approximation: the Supervisor renders the config exactly as
+  # a start would. Ordering matters -- AFTER the write, BEFORE any restart. A restart on a broken
+  # config leaves HA down, and with it every automation it runs.
+  #
+  # NO `failed_when: false`, and that is the entire point of this task: `failed_when: false` sets
+  # `.failed` to False EVEN ON GENUINE FAILURE, so an assert on `_ha_check.failed` after it would
+  # pass and the play would restart HA into a config the Supervisor had just rejected.
+  #
+  # A failing module aborts the play by itself. Anything that softens that has to justify why the
+  # gate should be allowed not to fire.
+  richard_lynch.home.homeassistant_supervisor:
+    action: core_check
+    apply: true
+  register: _ha_check
+  when: _ha_cfg_apply
+
+- name: Restart HA Core to load the new configuration
+  richard_lynch.home.homeassistant_supervisor:
+    action: core_restart
+    apply: true
+  when:
+    - _ha_cfg_apply
+    - _ha_cfg_restart

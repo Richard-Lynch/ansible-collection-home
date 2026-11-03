@@ -1,0 +1,45 @@
+---
+# GENERATED from roles/config_zigbee_bindings/meta/argument_specs.py — DO NOT EDIT.
+# Regenerate with: venv/bin/python tools/argspec/cli.py x generate config_zigbee_bindings
+#
+# These are the constraints Ansible's role-argspec validator CANNOT enforce. It handles
+# type/required/choices/no_log, but has no numeric-range, length or pattern checking, so
+# without this file those declarations would be decorative.
+#
+# Include from the role's entrypoints:  - ansible.builtin.include_tasks: _argspec_guards.yml
+
+- name: "GUARD (generated) — config_zigbee_bindings_max_passes must be >= 1; <= 60"
+  ansible.builtin.assert:
+    that:
+      - "config_zigbee_bindings_max_passes | int >= 1"
+      - "config_zigbee_bindings_max_passes | int <= 60"
+    fail_msg: "config_zigbee_bindings_max_passes violates a constraint declared in meta/argument_specs.py: must be >= 1; <= 60. Got: {{ config_zigbee_bindings_max_passes | default('(unset)') }}"
+    quiet: true
+  when: config_zigbee_bindings_max_passes is defined
+
+- name: "GUARD (generated) — config_zigbee_bindings_pass_delay must be >= 1; <= 600"
+  ansible.builtin.assert:
+    that:
+      - "config_zigbee_bindings_pass_delay | int >= 1"
+      - "config_zigbee_bindings_pass_delay | int <= 600"
+    fail_msg: "config_zigbee_bindings_pass_delay violates a constraint declared in meta/argument_specs.py: must be >= 1; <= 600. Got: {{ config_zigbee_bindings_pass_delay | default('(unset)') }}"
+    quiet: true
+  when: config_zigbee_bindings_pass_delay is defined
+
+- name: "GUARD (generated) — config_zigbee_bindings_timeout must be >= 10; <= 300"
+  ansible.builtin.assert:
+    that:
+      - "config_zigbee_bindings_timeout | int >= 10"
+      - "config_zigbee_bindings_timeout | int <= 300"
+    fail_msg: "config_zigbee_bindings_timeout violates a constraint declared in meta/argument_specs.py: must be >= 10; <= 300. Got: {{ config_zigbee_bindings_timeout | default('(unset)') }}"
+    quiet: true
+  when: config_zigbee_bindings_timeout is defined
+
+- name: "GUARD (generated) — config_zigbee_bindings_tries must be >= 1; <= 10"
+  ansible.builtin.assert:
+    that:
+      - "config_zigbee_bindings_tries | int >= 1"
+      - "config_zigbee_bindings_tries | int <= 10"
+    fail_msg: "config_zigbee_bindings_tries violates a constraint declared in meta/argument_specs.py: must be >= 1; <= 10. Got: {{ config_zigbee_bindings_tries | default('(unset)') }}"
+    quiet: true
+  when: config_zigbee_bindings_tries is defined

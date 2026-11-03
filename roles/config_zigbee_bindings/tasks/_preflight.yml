@@ -1,0 +1,71 @@
+---
+# Checks that must pass before anything reads or writes. Each one names its own fix, because the
+# untreated failure mode of all three is the same unhelpful symptom: "every device looks asleep".
+
+- name: Assert the declaration is structurally valid
+  # Runs the SAME parser the diff uses, so a bad declaration fails here -- naming the entry -- and
+  # not six tasks later as an empty delta that reads as "nothing to do". This covers the
+  # to/to_group mutual exclusion, which a role argspec cannot express: it has no
+  # mutually_exclusive, and these are sub-keys of a list element.
+  #
+  # Not a no-op guard: the filter raises AnsibleFilterError on a bad entry, which fails the task.
+  ansible.builtin.set_fact:
+    _czb_declared: "{{ config_zigbee_bindings_bindings | richard_lynch.home.zigbee_parse_declared }}"
+
+- name: Report what was declared
+  ansible.builtin.debug:
+    msg: >-
+      {{ config_zigbee_bindings_bindings | length }} declaration(s) covering
+      {{ _czb_declared | length }} binding(s) across
+      {{ _czb_declared | map(attribute='src') | unique | length }} source device(s).
+
+- name: Read Home Assistant's service registry
+  ansible.builtin.uri:
+    url: "{{ config_zigbee_bindings_ha_base_url }}/api/services"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ config_zigbee_bindings_ha_token }}"
+    timeout: "{{ config_zigbee_bindings_timeout | int }}"
+    status_code: [200]
+  register: _czb_services
+  # The Authorization header is in this task's module args. A task that dies mid-request dumps
+  # them, and -vvv prints them unasked -- gitleaks never sees a value that only existed in a log.
+  no_log: true
+  changed_when: false
+
+- name: Assert zha_toolkit is LOADED, not merely declared
+  # configuration.yaml declaring `zha_toolkit:` proves nothing about whether the HACS component
+  # imported successfully -- a failed component looks identical in that file. Without this check
+  # the symptom is that every bind silently fails and every device appears to be asleep, which is
+  # maximally confusing and sends you looking at batteries.
+  ansible.builtin.assert:
+    that:
+      - "'zha_toolkit' in (_czb_services.json | map(attribute='domain') | list)"
+    fail_msg: >-
+      zha_toolkit is not a loaded Home Assistant service domain. It is declared in
+      configuration.yaml, so the component itself is probably failing to import -- check HA's log
+      for 'zha_toolkit'. Install it via HACS (mdeweerd/zha-toolkit) if it is genuinely absent.
+      Every binding operation in this role depends on it.
+    success_msg: "zha_toolkit is loaded."
+
+- name: Assert the binding services this role calls all exist
+  # Named individually rather than trusting the domain's presence: zha_toolkit's service list has
+  # changed across releases, and a missing binds_get would otherwise surface as an unparseable
+  # response much later.
+  #
+  # `reject('in', have)` and NOT `select('in', required)`: the latter counts how many of the
+  # SERVICES match, so a registry exposing dozens of zha_toolkit services compares a large number
+  # against 3 and the assert fails on a perfectly good installation. The reject form is True only
+  # when nothing required is absent, and it also yields the missing names for the message.
+  ansible.builtin.assert:
+    that:
+      - "(_czb_required_services | reject('in', _czb_zt_services) | list) | length == 0"
+    fail_msg: >-
+      zha_toolkit is loaded but does not expose:
+      {{ _czb_required_services | reject('in', _czb_zt_services) | list | join(', ') }}.
+      The installed version may be too old -- this role needs binds_get, bind_ieee and zha_devices.
+    success_msg: "zha_toolkit exposes every service this role needs."
+  vars:
+    _czb_required_services: [binds_get, bind_ieee, zha_devices]
+    _czb_zt_services: >-
+      {{ (_czb_services.json | selectattr('domain', 'equalto', 'zha_toolkit') | first).services | list }}

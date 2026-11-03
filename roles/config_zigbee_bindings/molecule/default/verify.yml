@@ -1,0 +1,37 @@
+---
+# Asserts the ARTEFACTS converge produced, not a re-derivation of its logic.
+#
+# Deliberately thin: the real assertions live in converge.yml because they are about the role's
+# decision-making, which has no on-disk artefact. Re-computing the diff here with a selectattr
+# chain would be the MOLMIRROR-01 tautology -- asserting a copy of the role's logic against
+# itself, staying green through a real regression.
+
+- name: Verify — the generated drain automation landed and is loadable
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: The rendered automation exists
+      ansible.builtin.stat:
+        path: /tmp/molecule_czb_drain.yaml
+      register: _f
+
+    - name: It is present and non-empty
+      ansible.builtin.assert:
+        that:
+          - _f.stat.exists
+          - _f.stat.size > 0
+        fail_msg: "converge did not render the drain automation"
+        quiet: true
+
+    - name: It parses as YAML and declares the managed-block marker
+      # The marker is what lets a capture step and a human tell generated content apart from
+      # hand-authored automations.
+      ansible.builtin.assert:
+        that:
+          - _content | from_yaml | length > 0
+          - "'managed:config_zigbee_bindings' in _content"
+          - "'DO NOT EDIT' in _content"
+        fail_msg: "the generated automation is missing its managed-block marker"
+        quiet: true
+      vars:
+        _content: "{{ lookup('file', '/tmp/molecule_czb_drain.yaml') }}"

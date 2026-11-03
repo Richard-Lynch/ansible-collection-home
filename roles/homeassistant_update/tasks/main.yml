@@ -1,0 +1,227 @@
+---
+- name: Resolve declared options over their generated defaults
+  ansible.builtin.include_tasks: _resolve_defaults.yml
+
+- name: Cast the numeric options and gate booleans into the forms the tasks use
+  ansible.builtin.set_fact:
+    homeassistant_update_min_free_mb: "{{ homeassistant_update_min_free_mb | int }}"
+    homeassistant_update_settle_timeout: "{{ homeassistant_update_settle_timeout | int }}"
+    homeassistant_update_min_entities: "{{ homeassistant_update_min_entities | int }}"
+    # PRIVATE names: `set_fact` cannot override an extra-var, so `-e ..._apply=true` keeps the
+    # STRING "true" and every `when:` fails with "Conditionals must have a boolean result".
+    _hu_apply: "{{ homeassistant_update_apply | bool }}"
+    _hu_backup: "{{ homeassistant_update_backup | bool }}"
+    _hu_rollback: "{{ homeassistant_update_rollback | bool }}"
+
+# ── PREFLIGHT ──────────────────────────────────────────────────────────────────────────────────
+
+- name: Read the component's current and available version
+  richard_lynch.home.homeassistant_supervisor:
+    fact: "{{ homeassistant_update_component }}"
+  register: _hu_info
+
+- name: Read free disk on the data partition
+  # /data is where the Supervisor keeps images and backups. An update that fills it mid-write is
+  # worse than one that never started: it can leave a half-pulled image AND no room for the
+  # rollback backup.
+  ansible.builtin.shell:
+    cmd: set -o pipefail; df -Pm /data | awk 'NR==2 {print $4}'
+    executable: /bin/bash
+  register: _hu_df
+  changed_when: false
+
+- name: Establish the pre-update entity count
+  # The baseline that post-update validation is judged against. Taken BEFORE anything changes,
+  # because "did this update break something" is only answerable against a known-good number.
+  richard_lynch.home.homeassistant_info:
+    base_url: "{{ homeassistant_base_url }}"
+    token: "{{ homeassistant_token }}"
+    fact: states
+  register: _hu_pre
+  delegate_to: localhost
+
+- name: Report the plan
+  ansible.builtin.debug:
+    msg:
+      - "component      : {{ homeassistant_update_component }}"
+      - "current        : {{ _hu_info.data.version }}"
+      - "available      : {{ _hu_info.data.version_latest }}"
+      - "update pending : {{ _hu_info.data.update_available }}"
+      - "target         : {{ homeassistant_update_version | default('version_latest', true) }}"
+      - "free disk      : {{ _hu_df.stdout | int }} MB (minimum {{ homeassistant_update_min_free_mb }})"
+      - "entities now   : {{ _hu_pre.summary.total }} ({{ _hu_pre.summary.available }} available)"
+      - "pre-backup     : {{ 'yes' if _hu_backup else 'NO — this update will not be reversible' }}"
+      - "{{ 'APPLYING.' if _hu_apply else \"DRY RUN — nothing changed. Re-run with homeassistant_update_apply=true.\" }}"
+
+- name: Nothing to update
+  ansible.builtin.meta: end_play
+  when: not _hu_info.data.update_available
+
+- name: HARD GATE — enough free disk to update and to hold a rollback backup
+  ansible.builtin.assert:
+    that:
+      - "(_hu_df.stdout | int) >= (homeassistant_update_min_free_mb | int)"
+    fail_msg: >-
+      Only {{ _hu_df.stdout | int }} MB free on /data, below the {{ homeassistant_update_min_free_mb }} MB
+      minimum. Refusing to update: a partial backup is typically over a gigabyte, and running out of space mid-update
+      can leave a half-pulled image with no room to roll back. Delete old backups first
+      (fact=backups lists them).
+    quiet: true
+  when: _hu_apply
+
+- name: HARD GATE — configuration must be valid BEFORE updating
+  # Updating on top of a broken config means the restart afterwards fails for a reason that has
+  # nothing to do with the update, and the obvious conclusion ("the update broke it") is wrong.
+  richard_lynch.home.homeassistant_supervisor:
+    action: core_check
+    apply: true
+  when: _hu_apply
+
+# ── BACKUP ─────────────────────────────────────────────────────────────────────────────────────
+
+- name: Take a pre-update backup
+  richard_lynch.home.homeassistant_supervisor:
+    action: backup_partial
+    backup_name: "pre-update {{ homeassistant_update_component }} {{ _hu_info.data.version }} to {{ _hu_info.data.version_latest }}"
+    apply: true
+  register: _hu_backup_result
+  when:
+    - _hu_apply
+    - _hu_backup
+
+- name: Record the backup slug
+  # Captured explicitly so the rollback instruction in the report is a literal command rather than
+  # "find the newest backup", which is guesswork at exactly the wrong moment.
+  ansible.builtin.set_fact:
+    _hu_slug: "{{ _hu_backup_result.data.slug | default('') }}"
+  when:
+    - _hu_apply
+    - _hu_backup
+
+- name: HARD GATE — the backup must actually exist before we touch anything
+  # A backup step that reported success but produced nothing is the worst possible state to
+  # discover after an update goes wrong. Verified by reading it back from the Supervisor.
+  richard_lynch.home.homeassistant_supervisor:
+    fact: backups
+  register: _hu_backups_after
+  when:
+    - _hu_apply
+    - _hu_backup
+
+- name: Assert the backup is listed
+  ansible.builtin.assert:
+    that:
+      - "_hu_slug | length > 0"
+      - "_hu_slug in (_hu_backups_after.data.backups | map(attribute='slug') | list)"
+    fail_msg: >-
+      The pre-update backup did not appear in the Supervisor's backup list. NOT updating — without
+      it this change would be irreversible.
+    success_msg: "Pre-update backup {{ _hu_slug }} confirmed."
+    quiet: true
+  when:
+    - _hu_apply
+    - _hu_backup
+
+# ── UPDATE ─────────────────────────────────────────────────────────────────────────────────────
+
+- name: Perform the update
+  richard_lynch.home.homeassistant_supervisor:
+    action: "{{ homeassistant_update_component }}_update"
+    version: "{{ homeassistant_update_version | default(omit, true) }}"
+    apply: true
+  register: _hu_update
+  when: _hu_apply
+
+# ── POST-UPDATE VALIDATION ─────────────────────────────────────────────────────────────────────
+
+- name: Wait for Home Assistant to come back with a healthy entity count
+  # Judged on ENTITIES, not on the API answering. HA answers on :8123 while in RECOVERY MODE with
+  # a few dozen entities — a state where every naive health check passes and nothing works. The threshold
+  # is derived from the pre-update count so it cannot go stale as the installation grows.
+  richard_lynch.home.homeassistant_info:
+    base_url: "{{ homeassistant_base_url }}"
+    token: "{{ homeassistant_token }}"
+    fact: states
+  register: _hu_post
+  delegate_to: localhost
+  until: >-
+    (_hu_post.summary.total | default(0) | int)
+    >= (homeassistant_update_min_entities | int
+        if (homeassistant_update_min_entities | int) > 0
+        else ((_hu_pre.summary.total | int) * 0.9) | round | int)
+  retries: "{{ ((homeassistant_update_settle_timeout | int) / 15) | round | int }}"
+  delay: 15
+  failed_when: false
+  when: _hu_apply
+
+- name: Decide whether Home Assistant came back healthy
+  # Computed from the ENTITY NUMBERS, never from a task's `.failed`. `failed_when: false` forces
+  # .failed to False even on genuine failure, so a rollback gated on it could NEVER fire — the one
+  # branch that has to work would be the one that cannot.
+  #
+  # 90% of the pre-update count, derived rather than fixed: a hardcoded threshold goes stale as the
+  # installation grows, and recovery mode reports only a small fraction of the entities.
+  ansible.builtin.set_fact:
+    _hu_expected: "{{ (homeassistant_update_min_entities | int) if (homeassistant_update_min_entities | int) > 0 else (((_hu_pre.summary.total | int) * 0.9) | round
+      | int) }}"
+    _hu_actual: "{{ _hu_post.summary.total | default(0) | int }}"
+  when: _hu_apply
+
+- name: Record the health verdict
+  ansible.builtin.set_fact:
+    _hu_unhealthy: "{{ (_hu_actual | int) < (_hu_expected | int) }}"
+  when: _hu_apply
+
+- name: Verify the configuration still validates after the update
+  richard_lynch.home.homeassistant_supervisor:
+    action: core_check
+    apply: true
+  register: _hu_check_after
+  # failed_when: false so the play reaches the rollback decision below rather than aborting here.
+  # The VERDICT is taken from the module's own message, not from `.failed`, which this suppression
+  # would pin to False regardless.
+  failed_when: false
+  when: _hu_apply
+
+- name: Record the config-check verdict
+  ansible.builtin.set_fact:
+    _hu_cfg_bad: "{{ 'succeeded' not in (_hu_check_after.msg | default('')) }}"
+  when: _hu_apply
+
+# ── ROLLBACK ───────────────────────────────────────────────────────────────────────────────────
+
+- name: Roll back to the pre-update backup
+  # Only when explicitly enabled. A restore is itself a long, risky operation; doing it unattended
+  # on a failure nobody has looked at can turn a recoverable problem into a confusing one.
+  richard_lynch.home.homeassistant_supervisor:
+    action: backup_restore
+    backup_slug: "{{ _hu_slug }}"
+    apply: true
+  when:
+    - _hu_apply
+    - _hu_rollback
+    - _hu_slug | length > 0
+    - (_hu_unhealthy | default(false)) or (_hu_cfg_bad | default(false))
+
+- name: Fail loudly if the update did not come back healthy
+  ansible.builtin.assert:
+    that:
+      - "not (_hu_unhealthy | default(false))"
+      - "not (_hu_cfg_bad | default(false))"
+    fail_msg: >-
+      Update completed but validation FAILED.
+      Entities: {{ _hu_post.summary.total | default('?') }} (was {{ _hu_pre.summary.total }}).
+      Config check: {{ 'FAILED' if (_hu_cfg_bad | default(false)) else 'ok' }}.
+      {{ ('A rollback to ' ~ _hu_slug ~ ' was performed.') if _hu_rollback else
+         ('Backup ' ~ (_hu_slug | default('(none taken)')) ~ ' is available for rollback.') }}
+    quiet: true
+  when: _hu_apply
+
+- name: Report the outcome
+  ansible.builtin.debug:
+    msg:
+      - "{{ homeassistant_update_component }}: {{ _hu_info.data.version }} -> {{ _hu_info.data.version_latest }}"
+      - "entities: {{ _hu_pre.summary.total }} before, {{ _hu_post.summary.total | default('?') }} after"
+      - "config check after update: {{ 'FAILED' if (_hu_cfg_bad | default(false)) else 'passed' }}"
+      - "backup: {{ _hu_slug | default('none taken', true) }}"
+  when: _hu_apply

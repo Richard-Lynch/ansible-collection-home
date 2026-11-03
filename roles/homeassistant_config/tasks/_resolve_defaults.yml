@@ -1,0 +1,49 @@
+---
+# AUTO-GENERATED defaults resolver — DO NOT EDIT.
+#
+# Source of truth: roles/homeassistant_config/meta/argument_specs.py
+# Regenerate:      venv/bin/python tools/argspec/cli.py x generate homeassistant_config
+#
+# Edits here are silently overwritten on the next generation. To change a value or its
+# documentation, change the OptionSpec in the source file above — descriptions there
+# are emitted as the comments in this file.
+
+# Binds every declared option to its generated default, so a caller-supplied value
+# wins and an unsupplied one falls back rather than evaluating Undefined.
+#
+# Include this FIRST from every entrypoint:
+#   - ansible.builtin.include_tasks: _resolve_defaults.yml
+#
+# Role-specific setup logic belongs in tasks/setup_vars.yml, NOT here — this file is
+# overwritten on every generation.
+#
+# TWO BRANCHES, because `set_fact` persists for the whole play. A role invoked twice in
+# one play would otherwise see its OWN leftover facts on the second call, so a later
+# caller that omitted an option silently inherited the earlier caller's value instead of
+# the declared default. On a repeat call this ignores the role's own facts and rebinds
+# the defaults; an include-level `vars:` shadows the fact, so a value the caller DID
+# supply this time still wins. Roles called once per play only ever run the first branch.
+
+- name: Resolve declared options over their generated defaults
+  ansible.builtin.set_fact:
+    homeassistant_config_dir: "{{ homeassistant_config_dir | default(homeassistant_config_dir__default) if homeassistant_config_dir__default is defined else homeassistant_config_dir | default(omit) }}"
+    homeassistant_config_files: "{{ homeassistant_config_files | default(homeassistant_config_files__default) if homeassistant_config_files__default is defined else homeassistant_config_files | default(omit) }}"
+    homeassistant_config_dirs: "{{ homeassistant_config_dirs | default(homeassistant_config_dirs__default) if homeassistant_config_dirs__default is defined else homeassistant_config_dirs | default(omit) }}"
+    homeassistant_config_apply: "{{ homeassistant_config_apply | default(homeassistant_config_apply__default) if homeassistant_config_apply__default is defined else homeassistant_config_apply | default(omit) }}"
+    homeassistant_config_protect: "{{ homeassistant_config_protect | default(homeassistant_config_protect__default) if homeassistant_config_protect__default is defined else homeassistant_config_protect | default(omit) }}"
+    homeassistant_config_restart: "{{ homeassistant_config_restart | default(homeassistant_config_restart__default) if homeassistant_config_restart__default is defined else homeassistant_config_restart | default(omit) }}"
+  when: not (_homeassistant_config__argspec_resolved | default(false))
+
+- name: Rebind the defaults on a repeat call, ignoring this role's own leftover facts
+  ansible.builtin.set_fact:
+    homeassistant_config_dir: "{{ homeassistant_config_dir__default if homeassistant_config_dir__default is defined else homeassistant_config_dir | default(omit) }}"
+    homeassistant_config_files: "{{ homeassistant_config_files__default if homeassistant_config_files__default is defined else homeassistant_config_files | default(omit) }}"
+    homeassistant_config_dirs: "{{ homeassistant_config_dirs__default if homeassistant_config_dirs__default is defined else homeassistant_config_dirs | default(omit) }}"
+    homeassistant_config_apply: "{{ homeassistant_config_apply__default if homeassistant_config_apply__default is defined else homeassistant_config_apply | default(omit) }}"
+    homeassistant_config_protect: "{{ homeassistant_config_protect__default if homeassistant_config_protect__default is defined else homeassistant_config_protect | default(omit) }}"
+    homeassistant_config_restart: "{{ homeassistant_config_restart__default if homeassistant_config_restart__default is defined else homeassistant_config_restart | default(omit) }}"
+  when: _homeassistant_config__argspec_resolved | default(false)
+
+- name: Record that this role has resolved its options in this play
+  ansible.builtin.set_fact:
+    _homeassistant_config__argspec_resolved: true

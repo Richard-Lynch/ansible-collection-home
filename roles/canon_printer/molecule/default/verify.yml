@@ -1,0 +1,23 @@
+---
+# Asserts what the REAL role did in converge. Each refusal must name its reason — a refusal for the
+# wrong reason (e.g. a DNS error because a gate did not fire) is a failure here.
+- name: Verify
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Load results
+      ansible.builtin.set_fact:
+        r: "{{ lookup('file', '/tmp/molecule_canon_printer_results.json') | from_json }}"
+
+    - name: Every case was refused, by the intended check
+      ansible.builtin.assert:
+        that:
+          - r.no_ca is search('canon_printer_ca_cert')
+          - r.empty_settings is search('non-empty canon_printer_settings')
+          - r.bad_name is search('PRINTER_NAME')
+          - r.read_only_group is search('read-only')
+          - r.job_no_ca is search('canon_printer_ca_cert')
+          - "r.bad_pattern is search('must be one of: ALL, PAT1, PAT2')"
+          - r.plan_power_off is search('^would send a soft power-off')
+          - r.plan_cleaning is search('^would run cleaning')
+        fail_msg: "{{ r | to_nice_json }}"

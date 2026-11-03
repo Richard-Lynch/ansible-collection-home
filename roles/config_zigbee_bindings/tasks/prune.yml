@@ -1,0 +1,101 @@
+---
+# REMOVES bindings. Behind its OWN flag, separate from _apply, because converging and deleting are
+# different decisions and must not share one switch.
+#
+# WHY THIS IS NOT PART OF CONVERGE. ZHA binds every device to the coordinator during its interview,
+# and a network usually has bindings that predate this role. An auto-pruning converge would tear
+# those out network-wide on its first run and break state reporting for every bound device. So
+# converge is additive-only and this is a deliberate, separate act.
+#
+# What it removes: bindings present on a device but NOT declared, plus anything declared
+# `state: absent`. `status` shows both long before anyone runs this.
+
+- name: Assert the prune gate
+  ansible.builtin.assert:
+    that:
+      - config_zigbee_bindings_prune | bool
+    fail_msg: >-
+      prune REMOVES bindings from devices and needs its own explicit gate:
+      EXTRA='config_zigbee_bindings_action=prune config_zigbee_bindings_prune=true'.
+      config_zigbee_bindings_apply does NOT authorise removal. Run action=status first to see
+      exactly what would be removed.
+    quiet: true
+
+- name: Read the live state
+  ansible.builtin.include_tasks: _read.yml
+
+- name: Decide what would be removed
+  ansible.builtin.set_fact:
+    # Only from READABLE devices: pruning on the strength of a table we could not read would
+    # remove bindings we never actually saw.
+    _czb_prune_targets: >-
+      {{ _czb_live | selectattr('readable') | map(attribute='delta.extra') | flatten }}
+
+- name: Report the prune plan
+  ansible.builtin.debug:
+    msg: >-
+      Prune would remove {{ _czb_prune_targets | length }} undeclared binding(s):
+      {{ _czb_prune_targets | map(attribute='describe') | join(' | ') | default('(none)', true) }}
+      {{ '— DRY RUN' if not (config_zigbee_bindings_prune | bool) else '' }}
+
+- name: Refuse to prune a binding to the coordinator unless it is also declared absent
+  # The coordinator's own bindings are what make HA see a device's state at all. They are never
+  # "undeclared junk" -- they are ZHA doing its job. Removing one silently stops a light reporting
+  # back, which presents as a broken integration rather than as something this role did.
+  #
+  # The coordinator is identified as the device ZHA reports with nwk 0x0000; if that cannot be
+  # determined the prune is refused rather than guessed at.
+  ansible.builtin.assert:
+    that:
+      - _czb_coordinator_ieees | length > 0
+    fail_msg: >-
+      Could not identify the coordinator from the ZHA device list, so prune cannot prove it is not
+      about to remove a coordinator binding. Refusing. Run action=probe and check the device list.
+    quiet: true
+  vars:
+    _czb_coordinator_ieees: >-
+      {{ _czb_devices_normalised
+         | selectattr('nwk', 'defined')
+         | selectattr('nwk', 'in', [0, '0x0000', '0x0', '0'])
+         | map(attribute='ieee') | list }}
+  when: _czb_prune_targets | length > 0
+
+- name: Remove the undeclared bindings
+  ansible.builtin.uri:
+    url: "{{ config_zigbee_bindings_ha_base_url }}/api/services/zha_toolkit/binds_remove_all"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ config_zigbee_bindings_ha_token }}"
+      Content-Type: application/json
+    body_format: json
+    body:
+      ieee: "{{ item.src }}"
+      # command_data NARROWS the removal to this one target. Without it binds_remove_all removes
+      # EVERY binding on the device, coordinator bindings included -- which is exactly the
+      # network-wide breakage this action is structured to avoid.
+      command_data: "{{ item.group if item.group is not none else item.dst_ieee }}"
+      endpoint: "{{ item.src_ep }}"
+      cluster: "{{ item.cluster }}"
+      tries: "{{ config_zigbee_bindings_tries | int }}"
+      fail_exception: false
+    timeout: "{{ config_zigbee_bindings_timeout | int }}"
+    status_code: [200, 500]
+  loop: "{{ _czb_prune_targets }}"
+  loop_control:
+    label: "{{ item.describe }}"
+  no_log: true
+  when: config_zigbee_bindings_prune | bool
+  changed_when: _czb_prune_targets | length > 0
+
+- name: Re-read to confirm what was actually removed
+  ansible.builtin.include_tasks: _read.yml
+  when: config_zigbee_bindings_prune | bool
+
+- name: Report the outcome
+  ansible.builtin.debug:
+    msg: >-
+      After the prune:
+      {{ _czb_live | selectattr('readable') | map(attribute='delta.counts.extra') | map('int') | sum }}
+      undeclared binding(s) remain. A remainder is not necessarily a failure — a sleeping device
+      may not have received the removal; re-run when it is awake.
+  when: config_zigbee_bindings_prune | bool

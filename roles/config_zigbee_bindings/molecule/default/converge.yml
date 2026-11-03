@@ -1,0 +1,238 @@
+---
+# Exercises the role's OWN filters and template against recorded binds_get fixtures.
+#
+# NOT A TAUTOLOGY (MOLMIRROR-01): every assertion below runs the role's real code — the filter
+# plugins from filter_plugins/ and the template from templates/ — rather than re-deriving the diff
+# with a selectattr chain in this file. A stub-plus-filter-chain scenario asserts the copy against
+# itself and stays green through a real regression.
+#
+# The fixtures are the SHAPE zha_toolkit actually returns, confirmed against its source
+# (binds.py builds {"src", "src_ep", "cluster_id": "0x%04X", "dst": {...}}). Only a run against a
+# live radio proves a given installation still returns that shape.
+
+- name: Converge — the Zigbee binding diff, offline
+  hosts: localhost
+  gather_facts: false
+  vars:
+    _remote: "00:11:22:33:44:55:66:77"
+    _lamp: "00:17:88:01:02:03:04:05"
+
+    # Inventory written the way a human writes it: cluster NAMES, which is half the asymmetry.
+    _declared:
+      - name: "bedside -> lamp"
+        from: "00:11:22:33:44:55:66:77"
+        to: "00:17:88:01:02:03:04:05"
+        clusters: [genOnOff, genLevelCtrl]
+
+    # A device table as binds_get returns it: cluster HEX STRINGS, which is the other half.
+    _fixture_both:
+      service_response:
+        success: true
+        result:
+          - {src: "00:11:22:33:44:55:66:77", src_ep: 1, cluster_id: "0x0006",
+             dst: {addrmode: 3, dst_ieee: "00:17:88:01:02:03:04:05", dst_ep: 1}}
+          - {src: "00:11:22:33:44:55:66:77", src_ep: 1, cluster_id: "0x0008",
+             dst: {addrmode: 3, dst_ieee: "00:17:88:01:02:03:04:05", dst_ep: 1}}
+
+    _fixture_half:
+      service_response:
+        success: true
+        result:
+          - {src: "00:11:22:33:44:55:66:77", src_ep: 1, cluster_id: "0x0006",
+             dst: {addrmode: 3, dst_ieee: "00:17:88:01:02:03:04:05", dst_ep: 1}}
+
+    _fixture_empty:
+      service_response: {success: true, result: []}
+
+    # A coordinator binding plus a non-bindable reporting cluster — what ZHA creates during a
+    # device interview, on every device, before anyone declares anything.
+    _fixture_coordinator:
+      service_response:
+        success: true
+        result:
+          - {src: "00:11:22:33:44:55:66:77", src_ep: 1, cluster_id: "0x0006",
+             dst: {addrmode: 3, dst_ieee: "00:12:4b:00:1c:a1:b2:c3", dst_ep: 1}}
+          - {src: "00:11:22:33:44:55:66:77", src_ep: 1, cluster_id: "0x0402",
+             dst: {addrmode: 3, dst_ieee: "00:12:4b:00:1c:a1:b2:c3", dst_ep: 1}}
+
+    # Could not read. MUST NOT look like an empty table.
+    _fixture_unreadable:
+      service_response: {success: true}
+
+  tasks:
+    - name: Parse the declaration with the role's own filter
+      ansible.builtin.set_fact:
+        _parsed: "{{ _declared | richard_lynch.home.zigbee_parse_declared }}"
+
+    - name: One declaration of two clusters fans out to two bindings
+      ansible.builtin.assert:
+        that: ["_parsed | length == 2"]
+        fail_msg: "expected 2 normalised bindings, got {{ _parsed | length }}"
+        quiet: true
+
+    # ---- THE LANDMINE: names declared, hex reported, must still match --------------------
+    - name: Fully bound device reports CONVERGED
+      ansible.builtin.set_fact:
+        _d_both: "{{ _parsed | richard_lynch.home.zigbee_delta_normalised(_fixture_both, _remote) }}"
+
+    - name: A device holding both bindings is converged and writes nothing
+      ansible.builtin.assert:
+        that:
+          - _d_both.converged | bool
+          - _d_both.counts.missing == 0
+          - _d_both.counts.present == 2
+        fail_msg: >-
+          THE VOCABULARY LANDMINE: declared cluster NAMES did not match reported HEX ids.
+          An un-normalised diff reports every binding missing forever and re-writes on every pass.
+          Got {{ _d_both.counts }}.
+        quiet: true
+
+    - name: Half-bound device reports exactly the missing cluster
+      ansible.builtin.set_fact:
+        _d_half: "{{ _parsed | richard_lynch.home.zigbee_delta_normalised(_fixture_half, _remote) }}"
+
+    - name: The missing binding is genLevelCtrl, and genOnOff is present
+      ansible.builtin.assert:
+        that:
+          - not (_d_half.converged | bool)
+          - _d_half.counts.missing == 1
+          - "_d_half.missing[0].cluster_name == 'genLevelCtrl'"
+          - _d_half.counts.present == 1
+        fail_msg: "expected one missing (genLevelCtrl), got {{ _d_half }}"
+        quiet: true
+
+    - name: Unbound device reports everything missing
+      ansible.builtin.set_fact:
+        _d_empty: "{{ _parsed | richard_lynch.home.zigbee_delta_normalised(_fixture_empty, _remote) }}"
+
+    - name: An empty-but-readable table means all declared bindings are missing
+      ansible.builtin.assert:
+        that:
+          - _d_empty.counts.missing == 2
+          - _d_empty.counts.present == 0
+        fail_msg: "expected 2 missing, got {{ _d_empty.counts }}"
+        quiet: true
+
+    # ---- CONVERGE IS ADDITIVE: coordinator bindings must never be touched ---------------
+    - name: Coordinator fixture
+      ansible.builtin.set_fact:
+        _d_coord: "{{ _parsed | richard_lynch.home.zigbee_delta_normalised(_fixture_coordinator, _remote) }}"
+
+    - name: A coordinator binding shows as `extra`, never as something to remove on converge
+      ansible.builtin.assert:
+        that:
+          # genOnOff -> coordinator is undeclared, so it is `extra`.
+          - _d_coord.counts.extra == 1
+          # The non-bindable reporting cluster (0x0402) is skipped entirely: this role cannot
+          # write it, so it must never appear as missing OR extra.
+          - "'0x0402' not in (_d_coord.extra | map(attribute='cluster') | map('string') | join(','))"
+          # Both declared bindings are still missing -- an extra does not satisfy a declaration.
+          - _d_coord.counts.missing == 2
+        fail_msg: >-
+          Coordinator/reporting bindings mishandled. ZHA creates these on every device during
+          interview; treating them as removable would break state reporting network-wide.
+          Got {{ _d_coord }}.
+        quiet: true
+
+    # ---- UNREADABLE MUST RAISE, not read as empty ---------------------------------------
+    - name: An unreadable table must REFUSE, not report "no bindings"
+      block:
+        - name: Attempt to parse a table that was never read
+          ansible.builtin.set_fact:
+            _should_not_exist: "{{ _parsed | richard_lynch.home.zigbee_delta_normalised(_fixture_unreadable, _remote) }}"
+        - name: Fail loudly if the refusal did not fire
+          ansible.builtin.fail:
+            msg: >-
+              An unreadable binds_get response parsed as an EMPTY TABLE. That is the worst
+              failure this role can have: sweep would re-open every confirmed binding on a
+              merely-offline device and write to it on every wake, forever.
+      rescue:
+        - name: The refusal fired, as it must
+          ansible.builtin.debug:
+            msg: "PASS — an unreadable table raises instead of looking empty."
+
+    # ---- A bad declaration must fail at the declaration, naming itself ------------------
+    - name: A declaration with NEITHER to nor to_group must be refused
+      block:
+        - name: Attempt to parse it
+          ansible.builtin.set_fact:
+            _bad: "{{ [{'name': 'oops', 'from': _remote, 'clusters': ['genOnOff']}] | richard_lynch.home.zigbee_parse_declared }}"
+        - name: Fail loudly if it was accepted
+          ansible.builtin.fail:
+            msg: >-
+              A declaration with no target was accepted. bind_ieee with no command_data binds to
+              the COORDINATOR, so this would quietly create a real binding nobody asked for.
+      rescue:
+        - name: The refusal fired
+          ansible.builtin.debug:
+            msg: "PASS — a declaration with no target is refused."
+
+    # ---- The service args handed to zha_toolkit -----------------------------------------
+    - name: Build the bind arguments for a missing binding
+      ansible.builtin.set_fact:
+        _args: "{{ _d_half.missing[0] | richard_lynch.home.zigbee_bind_args }}"
+
+    - name: command_data is always populated, and the cluster is sent as an id
+      ansible.builtin.assert:
+        that:
+          - _args.command_data == _lamp
+          - _args.cluster == 8
+          - _args.ieee == _remote
+          - _args.dst_endpoint == 1
+        fail_msg: "bind args wrong: {{ _args }}"
+        quiet: true
+
+    # ---- The generated drain automation --------------------------------------------------
+    - name: Render the drain automation from the same declaration
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/../../templates/drain_automations.yaml.j2"
+        dest: "{{ _render_dest }}"
+        mode: "0644"
+      vars:
+        _czb_by_device: "{{ _parsed | groupby('src') }}"
+        config_zigbee_bindings_tries: 3
+        _render_dest: "/tmp/molecule_czb_drain.yaml"
+
+    - name: Read it back and parse it as YAML
+      ansible.builtin.slurp:
+        src: "/tmp/molecule_czb_drain.yaml"
+      register: _rendered
+
+    - name: The generated automation is valid YAML with the properties that matter
+      ansible.builtin.assert:
+        that:
+          - _auto | length == 1
+          - "_auto[0].mode == 'single'"
+          - "_auto[0].triggers[0].event_data.ieee == _remote"
+          # The disarm: a binds_get read, then a `choose` with one branch per declared binding.
+          - "_auto[0].actions[0].response_variable == 'czb_live'"
+          - _auto[0].actions[1].choose | length == 2
+        fail_msg: >-
+          Generated automation is wrong. `mode: single` is load-bearing (pressing the button
+          several times is a SUPPORTED workflow, so concurrent runs are normal), and without the
+          binds_get condition this would re-bind on every press for the life of the device.
+          Got: {{ _auto }}
+        quiet: true
+      vars:
+        _auto: "{{ _rendered.content | b64decode | from_yaml }}"
+
+    - name: Re-render to prove byte-stability
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/../../templates/drain_automations.yaml.j2"
+        dest: "/tmp/molecule_czb_drain_2.yaml"
+        mode: "0644"
+      vars:
+        _czb_by_device: "{{ _parsed | groupby('src') }}"
+        config_zigbee_bindings_tries: 3
+      register: _rerender
+
+    - name: The template is byte-stable across renders
+      # A capture step that round-trips HA's YAML back into source control would otherwise fight
+      # generated content that reordered itself or carried a timestamp, indefinitely.
+      ansible.builtin.assert:
+        that: ["not (_rerender is changed) or (_a == _b)"]
+        fail_msg: "the generated automation is not byte-stable; capture and generate would fight"
+        quiet: true
+      vars:
+        _a: "{{ lookup('file', '/tmp/molecule_czb_drain.yaml') }}"
+        _b: "{{ lookup('file', '/tmp/molecule_czb_drain_2.yaml') }}"

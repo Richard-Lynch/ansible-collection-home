@@ -1,0 +1,62 @@
+---
+# Asserts the four verdicts the ROLE produced. Nothing here recomputes a checksum or re-derives
+# the comparison — that would be the MOLMIRROR-01 tautology, asserting the test against itself.
+- name: Verify the drift gate fires, and only when it should
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    _mol_root: "{{ lookup('env', 'MOLECULE_EPHEMERAL_DIRECTORY') }}/ha-config-drift"
+
+  tasks:
+    - name: Read the verdicts converge recorded
+      ansible.builtin.slurp:
+        src: "{{ _mol_root }}/verdicts.json"
+      register: _raw
+
+    - name: Parse them
+      ansible.builtin.set_fact:
+        v: "{{ _raw.content | b64decode | from_json }}"
+
+    - name: The guard FIRES on a file edited outside Ansible
+      # Without it the deploy would overwrite automations.yaml and report success.
+      ansible.builtin.assert:
+        that:
+          - v.c1_refused | bool
+          - v.c1_drifted == ['automations.yaml']
+        fail_msg: >-
+          The gate did NOT refuse a drifted file (refused={{ v.c1_refused }},
+          drifted={{ v.c1_drifted }}). A deploy would silently discard the live edit.
+        success_msg: "Drifted automations.yaml: refused, and named in the report."
+
+    - name: The guard does NOT fire when the live file matches the repo
+      # The near-miss. A guard that blocks a correct deploy gets switched off, and then protects
+      # nothing — so this direction is not a formality.
+      ansible.builtin.assert:
+        that:
+          - not (v.c2_refused | bool)
+          - v.c2_drifted == []
+        fail_msg: >-
+          FALSE POSITIVE — the gate blocked an UNDRIFTED file (refused={{ v.c2_refused }},
+          drifted={{ v.c2_drifted }}). Identical live and repo copies must deploy normally.
+        success_msg: "Undrifted automations.yaml: deployed normally, nothing reported as drifted."
+
+    - name: protect=false overwrites deliberately, and still records what it overwrote
+      ansible.builtin.assert:
+        that:
+          - not (v.c3_refused | bool)
+          - v.c3_drifted == ['automations.yaml']
+        fail_msg: >-
+          homeassistant_config_protect=false must allow the overwrite while still recording the
+          drift (refused={{ v.c3_refused }}, drifted={{ v.c3_drifted }}).
+        success_msg: "protect=false: overwrite allowed, drift still recorded for the report."
+
+    - name: A dry run over a drifted file reports rather than aborts
+      ansible.builtin.assert:
+        that:
+          - not (v.c4_refused | bool)
+          - v.c4_drifted == ['automations.yaml']
+        fail_msg: >-
+          A dry run writes nothing and must complete so it can REPORT the drift
+          (refused={{ v.c4_refused }}, drifted={{ v.c4_drifted }}).
+        success_msg: "Dry run: completed, and named the drifted file."

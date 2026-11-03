@@ -1,0 +1,23 @@
+---
+- name: HARD GATE — read needs the admin password and a pinned CA
+  ansible.builtin.assert:
+    that:
+      - (canon_printer_password | default('')) | length > 0
+      - (canon_printer_ca_cert | default('')) | length > 0
+    fail_msg: >-
+      read needs canon_printer_password (1Password) and canon_printer_ca_cert (the printer's CA —
+      the admin hash is password-equivalent and is never sent over an unpinned link).
+    quiet: true
+
+- name: Read every settings group
+  richard_lynch.home.canon_printer_settings:
+    host: "{{ canon_printer_host }}"
+    password: "{{ canon_printer_password }}"
+    ca_cert: "{{ canon_printer_ca_cert }}"
+  register: _canon_printer_read
+
+- name: Report
+  ansible.builtin.debug:
+    msg:
+      current: "{{ _canon_printer_read.current }}"
+      unsupported_on_this_model: "{{ _canon_printer_read.unsupported }}"

@@ -1,0 +1,29 @@
+---
+# Offline: exercise the ha_backup_config module's idempotency DECISION (schedule diff) without a live
+# HA. No websocket can be opened offline, so the pure compare logic the module uses is replicated and
+# its outcomes asserted. The module's connect path needs a real appliance.
+- name: Converge
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Desired vs current-that-matches → no update needed
+      vars:
+        desired: {recurrence: "daily", time: "04:15"}
+        current: {recurrence: "daily", time: "04:15:00"}
+      ansible.builtin.set_fact:
+        _match_needs_update: >-
+          {{ (current.recurrence != desired.recurrence)
+             or (desired.recurrence != 'never' and (current.time[:5]) != desired.time) }}
+
+    - name: Desired vs current-that-differs → update needed
+      vars:
+        desired: {recurrence: "daily", time: "04:15"}
+        current: {recurrence: "never", time: null}
+      ansible.builtin.set_fact:
+        _diff_needs_update: >-
+          {{ (current.recurrence != desired.recurrence)
+             or (desired.recurrence != 'never' and ((current.time or '')[:5]) != desired.time) }}
+
+    - name: Confirm the module file is present + syntactically importable
+      ansible.builtin.command: "python3 -c 'import ast; ast.parse(open(\"{{ playbook_dir }}/../../library/ha_backup_config.py\").read())'"
+      changed_when: false

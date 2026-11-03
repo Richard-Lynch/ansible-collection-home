@@ -1,0 +1,5 @@
+---
+- name: Run Deep cleaning
+  ansible.builtin.include_tasks: _maintenance.yml
+  vars:
+    _canon_printer_job: deep_cleaning

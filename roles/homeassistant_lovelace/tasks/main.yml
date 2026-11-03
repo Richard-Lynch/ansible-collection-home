@@ -1,0 +1,192 @@
+---
+- name: Resolve declared options over their generated defaults
+  ansible.builtin.include_tasks: _resolve_defaults.yml
+
+- name: Cast the gate booleans into private facts
+  ansible.builtin.set_fact:
+    _ha_lv_prune: "{{ homeassistant_lovelace_prune | bool }}"
+    # PRIVATE names: `set_fact` cannot override an extra-var, so `-e ..._apply=true` would keep the
+    # STRING "true" and every `when:` would fail on "Conditionals must have a boolean result".
+    _ha_lv_apply: "{{ homeassistant_lovelace_apply | bool }}"
+    _ha_lv_protect: "{{ homeassistant_lovelace_protect | bool }}"
+
+- name: Confirm this is really a Home Assistant config directory
+  ansible.builtin.stat:
+    path: "{{ homeassistant_lovelace_dir }}/.HA_VERSION"
+  register: _ha_marker
+
+- name: Assert the marker file exists
+  ansible.builtin.assert:
+    that:
+      - "_ha_marker.stat.exists"
+    fail_msg: >-
+      {{ homeassistant_lovelace_dir }}/.HA_VERSION is missing, so this is not a Home Assistant
+      config directory. Refusing to write dashboards into it.
+    quiet: true
+
+- name: Confirm every registered dashboard has a file in the source directory
+  # The registry and the files are separate things, and a typo in either is invisible until HA
+  # renders an empty panel. Checked BEFORE anything is written.
+  ansible.builtin.stat:
+    path: "{{ homeassistant_lovelace_src }}/{{ item.file }}"
+  loop: "{{ homeassistant_lovelace_dashboards }}"
+  loop_control:
+    label: "{{ item.file }}"
+  delegate_to: localhost
+  register: _ha_lv_repo
+
+- name: Assert no registered dashboard is missing its file
+  ansible.builtin.assert:
+    that:
+      - "_ha_lv_repo.results | rejectattr('stat.exists') | list | length == 0"
+    fail_msg: >-
+      Registered but missing from {{ homeassistant_lovelace_src }}:
+      {{ _ha_lv_repo.results | rejectattr('stat.exists') | map(attribute='item')
+         | map(attribute='file') | join(', ') }}. In YAML mode HA would render these as empty
+      panels rather than failing, so this is caught here instead.
+    quiet: true
+
+- name: Warn about source files that are not registered
+  # The reverse direction: a YAML file nobody registered is dead weight that will never appear in
+  # HA. Reported rather than fatal — it is untidy, not dangerous.
+  ansible.builtin.find:
+    paths: "{{ homeassistant_lovelace_src }}"
+    patterns: "*.yaml"
+  delegate_to: localhost
+  register: _ha_lv_files
+
+- name: Read the live dashboards, to detect drift before overwriting
+  # An unconditional `copy` would silently discard a hand-edit made on the box. YAML mode disables
+  # the UI editor, so this SHOULD never fire — but the vscode add-on, a direct SSH edit or a
+  # hand-run `ha` command can all still write these files. "Should be impossible" is exactly the
+  # assumption worth checking before an overwrite.
+  ansible.builtin.stat:
+    path: "{{ homeassistant_lovelace_dir }}/{{ homeassistant_lovelace_subdir }}/{{ item.file }}"
+    checksum_algorithm: sha1
+  loop: "{{ homeassistant_lovelace_dashboards }}"
+  loop_control:
+    label: "{{ item.file }}"
+  register: _ha_lv_live
+
+- name: Compare live against the source
+  ansible.builtin.stat:
+    path: "{{ homeassistant_lovelace_src }}/{{ item.file }}"
+    checksum_algorithm: sha1
+  loop: "{{ homeassistant_lovelace_dashboards }}"
+  loop_control:
+    label: "{{ item.file }}"
+  delegate_to: localhost
+  register: _ha_lv_repo_sums
+
+- name: Identify drifted dashboards
+  # Written as a plain loop rather than a filter chain: a zip/selectattr one-liner is easy to get
+  # silently wrong in the direction that reads as "no drift".
+  ansible.builtin.set_fact:
+    _ha_lv_drifted: >-
+      {{ _ha_lv_drifted | default([]) + [item.0.item.file] }}
+  loop: "{{ _ha_lv_live.results | zip(_ha_lv_repo_sums.results) | list }}"
+  loop_control:
+    label: "{{ item.0.item.file }}"
+  when:
+    - item.0.stat.exists
+    - item.1.stat.exists
+    - item.0.stat.checksum != item.1.stat.checksum
+
+- name: HARD GATE — refuse to clobber live changes
+  ansible.builtin.assert:
+    that:
+      - "(_ha_lv_drifted | default([]) | length) == 0"
+    fail_msg: >-
+      These dashboards differ on the box from what the source directory holds:
+      {{ _ha_lv_drifted | default([]) | join(', ') }} — someone edited them outside Ansible.
+      Deploying would DISCARD that work. Capture the live version into
+      {{ homeassistant_lovelace_src }} and review the diff, or re-run with
+      homeassistant_lovelace_protect=false to overwrite deliberately.
+    quiet: true
+  when:
+    - _ha_lv_apply
+    - _ha_lv_protect
+
+- name: Ensure the dashboard directory exists
+  ansible.builtin.file:
+    path: "{{ homeassistant_lovelace_dir }}/{{ homeassistant_lovelace_subdir }}"
+    state: directory
+    mode: "0755"
+  when: _ha_lv_apply
+
+- name: Deploy the dashboards
+  ansible.builtin.copy:
+    src: "{{ homeassistant_lovelace_src }}/{{ item.file }}"
+    dest: "{{ homeassistant_lovelace_dir }}/{{ homeassistant_lovelace_subdir }}/{{ item.file }}"
+    mode: "0644"
+    # A timestamped copy on the box, kept by Ansible itself. Cheap here (these files are KBs) and
+    # it is the only record of what was replaced if a deploy turns out to be wrong.
+    backup: true
+  loop: "{{ homeassistant_lovelace_dashboards }}"
+  loop_control:
+    label: "{{ item.file }}"
+  # check_mode rather than a `when:` gate, so a dry run DIFFS instead of skipping and reporting
+  # "nothing to do" regardless of the real state.
+  check_mode: "{{ not _ha_lv_apply }}"
+  diff: true
+  register: _ha_lv_copied
+
+- name: Render the Lovelace config block from the registry
+  # GENERATED, not hand-maintained. A dashboard list kept in TWO places — these files and a
+  # hand-written block in configuration.yaml — means a new dashboard needs editing both, and each
+  # looks correct on its own while the pair disagrees. One registry drives both.
+  #
+  # Written to its own file and !include-d, so a dashboard change never touches configuration.yaml
+  # and therefore never needs the config role or a restart.
+  ansible.builtin.template:
+    src: lovelace.yaml.j2
+    dest: "{{ homeassistant_lovelace_dir }}/{{ homeassistant_lovelace_include }}"
+    mode: "0644"
+    backup: true
+  check_mode: "{{ not _ha_lv_apply }}"
+  diff: true
+  register: _ha_lv_block
+
+- name: Find dashboard files on the box
+  ansible.builtin.find:
+    paths: "{{ homeassistant_lovelace_dir }}/{{ homeassistant_lovelace_subdir }}"
+    patterns: "*.yaml"
+  register: _ha_lv_onbox
+
+- name: Prune deregistered dashboards
+  # Deregistering removes the dashboard from HA at once, but leaves the file — which later reads as
+  # "is this live or not?". Ansible's own `backup: true` copies are pruned too: they accumulate one
+  # per deploy and are superseded by the source directory's own history.
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop: "{{ _ha_lv_stale }}"
+  when:
+    - _ha_lv_apply
+    - _ha_lv_prune
+  vars:
+    _ha_lv_stale: >-
+      {{ _ha_lv_onbox.files | map(attribute='path') | list
+         | reject('search', '~$')
+         | difference(homeassistant_lovelace_dashboards | map(attribute='file')
+                      | map('regex_replace', '^', homeassistant_lovelace_dir ~ '/' ~ homeassistant_lovelace_subdir ~ '/') | list) }}
+
+- name: Report
+  ansible.builtin.debug:
+    msg:
+      - "{{ 'DEPLOYED' if _ha_lv_apply else 'DRY RUN — nothing written' }}: {{ homeassistant_lovelace_dir }}/{{ homeassistant_lovelace_subdir }}/"
+      - "Registered: {{ homeassistant_lovelace_dashboards | map(attribute='file') | join(', ') }}"
+      - "WOULD CHANGE: {{ _changed | join(', ') if _changed else 'nothing — live matches the source' }}"
+      - "Drifted (live edited outside Ansible): {{ _ha_lv_drifted | default([]) | join(', ') or 'none' }}"
+      - "Unregistered source files (never deployed): {{ _orphans | join(', ') or 'none' }}"
+      - "lovelace: block {{ 'CHANGED' if _ha_lv_block.changed else 'unchanged' }} ({{ homeassistant_lovelace_include }})"
+      - "Stale on box (deregistered, still present): {{ _stale | join(', ') or 'none' }}{{ '' if _ha_lv_prune else \" — set homeassistant_lovelace_prune=true to delete\"\
+        \ }}"
+  vars:
+    _changed: "{{ _ha_lv_copied.results | default([]) | selectattr('changed') | map(attribute='item') | map(attribute='file') | list }}"
+    _stale: >-
+      {{ (_ha_lv_onbox.files | default({'files': []}) | default([])) | default([]) | map(attribute='path') | map('basename') | list
+         | difference(homeassistant_lovelace_dashboards | map(attribute='file') | list) }}
+    _orphans: >-
+      {{ _ha_lv_files.files | map(attribute='path') | map('basename') | list
+         | difference(homeassistant_lovelace_dashboards | map(attribute='file') | list) }}

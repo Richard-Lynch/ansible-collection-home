@@ -1,0 +1,52 @@
+---
+- name: HARD GATE — converge needs the admin password and something to converge
+  ansible.builtin.assert:
+    that:
+      - (canon_printer_password | default('')) | length > 0
+      - (canon_printer_ca_cert | default('')) | length > 0
+      - canon_printer_settings | length > 0
+    fail_msg: >-
+      converge needs canon_printer_password (1Password), canon_printer_ca_cert (pinned TLS) and a
+      non-empty canon_printer_settings (inventory). An empty settings dict would "converge" to nothing and report green.
+    quiet: true
+
+- name: "{{ 'APPLY' if canon_printer_apply | bool else 'PLAN' }} — converge settings against the live printer"
+  richard_lynch.home.canon_printer_settings:
+    host: "{{ canon_printer_host }}"
+    password: "{{ canon_printer_password }}"
+    ca_cert: "{{ canon_printer_ca_cert }}"
+    settings: "{{ canon_printer_settings }}"
+    groups: "{{ canon_printer_settings.keys() | list }}"
+    apply: "{{ canon_printer_apply | bool }}"
+  register: _canon_printer_converge
+
+- name: Report
+  ansible.builtin.debug:
+    msg:
+      mode: "{{ 'APPLIED' if _canon_printer_converge.applied else 'PLAN ONLY (canon_printer_apply=true to write)' }}"
+      changes: "{{ _canon_printer_converge.changes if _canon_printer_converge.changes else 'none — printer already matches inventory' }}"
+      now: "{{ _canon_printer_converge.current }}"
+
+- name: HARD GATE — after an apply, every desired value must be what the device now reports
+  # The module already reads back, but this asserts the property the CALLER depends on, from the
+  # returned state rather than from the module's own success flag.
+  ansible.builtin.assert:
+    that:
+      - _canon_printer_converge.current[item.0.key][item.1.key] == (item.1.value | string)
+    fail_msg: >-
+      {{ item.0.key }}.{{ item.1.key }} is {{ _canon_printer_converge.current[item.0.key][item.1.key] | default('absent') }}
+      after the apply, not {{ item.1.value }}.
+    quiet: true
+  loop: "{{ _canon_printer_pairs }}"
+  loop_control:
+    label: "{{ item.0.key }}.{{ item.1.key }}"
+  vars:
+    _canon_printer_pairs: >-
+      {%- set out = [] -%}
+      {%- for g, fields in canon_printer_settings.items() -%}
+      {%- for f, v in fields.items() -%}
+      {%- set _ = out.append([{'key': g}, {'key': f, 'value': v}]) -%}
+      {%- endfor -%}
+      {%- endfor -%}
+      {{ out }}
+  when: _canon_printer_converge.applied

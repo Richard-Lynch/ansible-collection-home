@@ -1,0 +1,46 @@
+---
+# Shared body of the nozzle_check / cleaning / deep_cleaning / power_off actions (each is a one-line
+# file so `canon_printer_action=<name>` resolves through main.yml like every other action).
+#
+# These are ACTIONS, not state: a re-run does the thing again, and the jobs use ink and paper. So
+# they are generate-don't-apply — without canon_printer_apply=true the module only reports the plan.
+
+- name: HARD GATE — a maintenance job needs the admin password and a pinned CA
+  ansible.builtin.assert:
+    that:
+      - (canon_printer_password | default('')) | length > 0
+      - (canon_printer_ca_cert | default('')) | length > 0
+    fail_msg: >-
+      {{ _canon_printer_job }} needs canon_printer_password (1Password) and canon_printer_ca_cert
+      (the admin login is only ever sent over a pinned link).
+    quiet: true
+  when: _canon_printer_job != 'power_off'
+
+- name: "{{ 'RUN' if canon_printer_apply | bool else 'PLAN' }} — {{ _canon_printer_job }}"
+  richard_lynch.home.canon_printer_maintenance:
+    host: "{{ canon_printer_host }}"
+    job: "{{ _canon_printer_job }}"
+    pattern: "{{ canon_printer_cleaning_pattern | default(omit) }}"
+    password: "{{ canon_printer_password if _canon_printer_job != 'power_off' else omit }}"
+    ca_cert: "{{ canon_printer_ca_cert if _canon_printer_job != 'power_off' else omit }}"
+    apply: "{{ canon_printer_apply | bool }}"
+  register: _canon_printer_job_result
+
+- name: HARD GATE — an applied run must come back with the device's own completion
+  # The module's success is not the property that matters; the device saying the job finished (or,
+  # for power_off, the printer no longer answering) is.
+  ansible.builtin.assert:
+    that:
+      - >-
+        (_canon_printer_job_result.result.result | default('')) == 'done'
+        if _canon_printer_job != 'power_off'
+        else (_canon_printer_job_result.result.off_after_s is defined)
+    fail_msg: "{{ _canon_printer_job }} returned without a completion: {{ _canon_printer_job_result }}"
+    quiet: true
+  when: _canon_printer_job_result.applied
+
+- name: Report
+  ansible.builtin.debug:
+    msg: >-
+      {{ _canon_printer_job_result.result if _canon_printer_job_result.applied
+         else 'PLAN ONLY (canon_printer_apply=true to run): ' ~ _canon_printer_job_result.plan }}

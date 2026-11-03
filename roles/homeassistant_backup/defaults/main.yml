@@ -1,0 +1,16 @@
+---
+# homeassistant_backup — set Home Assistant's native automatic-backup schedule. HA runs as HAOS (a
+# locked appliance), so its config is API-only, and the backup SCHEDULE is settable ONLY over the
+# websocket API (backup/config/update) — the REST API cannot do it. This role runs from localhost and
+# uses the ha_backup_config module (websocket) to set the schedule idempotently.
+#
+# homeassistant_backup_base_url and homeassistant_backup_token are REQUIRED and have no default: they
+# are installation config (an address and a credential), set by the caller.
+
+# --- the schedule (HA native Backup integration; retention is managed in HA, default 3 copies) ---
+homeassistant_backup_recurrence: "daily" # daily | weekly | never
+homeassistant_backup_time: "04:15" # HH:MM, appliance local time
+
+# Trigger an automatic backup immediately after configuring (proves it works + creates a fresh restore
+# point now). Off by default.
+homeassistant_backup_run_now: false

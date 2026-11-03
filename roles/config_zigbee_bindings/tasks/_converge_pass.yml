@@ -1,0 +1,58 @@
+---
+# ONE convergence pass. Included in a bounded loop by converge.yml; no-ops once converged.
+#
+# Per SOURCE DEVICE rather than per binding: one wake window should land everything that device
+# needs, so all of its missing bindings are written back-to-back while it is listening.
+
+- name: "Pass {{ _czb_pass }} — what is still missing"
+  ansible.builtin.set_fact:
+    _czb_pass_targets: >-
+      {{ _czb_live | selectattr('readable') | map(attribute='delta.missing') | flatten }}
+
+- name: "Pass {{ _czb_pass }} — note convergence so later passes no-op"
+  # Set rather than breaking out of the loop: Ansible has no `break`, so the remaining iterations
+  # run and skip. Cheap, and it keeps the pass count honest in the output.
+  ansible.builtin.set_fact:
+    _czb_converged_early: true
+  when:
+    - _czb_pass_targets | length == 0
+    - _czb_live | rejectattr('readable') | list | length == 0
+
+- name: "Pass {{ _czb_pass }} — write the missing bindings"
+  ansible.builtin.uri:
+    url: "{{ config_zigbee_bindings_ha_base_url }}/api/services/zha_toolkit/bind_ieee"
+    # NO ?return_response: bind_ieee returns no data and HA answers 400 when it is passed to a
+    # service that returns none. The verdict comes from the re-read, never from this call.
+    method: POST
+    headers:
+      Authorization: "Bearer {{ config_zigbee_bindings_ha_token }}"
+      Content-Type: application/json
+    body_format: json
+    body: >-
+      {{ (item | richard_lynch.home.zigbee_bind_args)
+         | combine({'tries': config_zigbee_bindings_tries | int, 'fail_exception': false}) }}
+    timeout: "{{ config_zigbee_bindings_timeout | int }}"
+    # Tolerated, in the body AND here. A write to a sleeping device failing is the EXPECTED case,
+    # so it must not abort the pass or the loop -- which is precisely why the verdict cannot come
+    # from this task's result.
+    status_code: [200, 500]
+  loop: "{{ _czb_pass_targets }}"
+  loop_control:
+    label: "{{ item.describe }}"
+  no_log: true
+  changed_when: _czb_pass_targets | length > 0
+  when: not (_czb_converged_early | default(false))
+
+- name: "Pass {{ _czb_pass }} — wait for the next wake window"
+  # Skipped on the final pass: a trailing sleep delays the verdict and buys nothing, since the
+  # re-read follows immediately.
+  ansible.builtin.pause:
+    seconds: "{{ config_zigbee_bindings_pass_delay | int }}"
+  when:
+    - not (_czb_converged_early | default(false))
+    - _czb_pass_targets | length > 0
+    - (_czb_pass | int) < (config_zigbee_bindings_max_passes | int)
+
+- name: "Pass {{ _czb_pass }} — re-read the binding tables"
+  ansible.builtin.include_tasks: _read.yml
+  when: not (_czb_converged_early | default(false))

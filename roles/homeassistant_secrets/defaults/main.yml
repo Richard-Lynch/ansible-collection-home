@@ -1,0 +1,39 @@
+---
+# AUTO-GENERATED defaults file — DO NOT EDIT.
+#
+# Source of truth: roles/homeassistant_secrets/meta/argument_specs.py
+# Regenerate:      venv/bin/python tools/argspec/cli.py x generate homeassistant_secrets
+#
+# Edits here are silently overwritten on the next generation. To change a value or its
+# documentation, change the OptionSpec in the source file above — descriptions there
+# are emitted as the comments in this file.
+# Entrypoint:      main
+
+# Path to HA's secrets file inside the SSH add-on.
+homeassistant_secrets_path__default: /config/secrets.yaml
+
+# Which secrets to manage, as a list of:
+#   key:    the !secret name referenced from configuration.yaml
+#   item:   1Password item title (or id), read with
+#           richard_lynch.common.onepassword_cached
+#   field:  field within that item
+#   vault:  1Password vault (defaults to homeassistant_secrets_vault)
+# EMPTY BY DEFAULT. A role that writes credentials must be told exactly which
+# ones; a default list would silently push secrets nobody asked for the moment
+# someone included the role.
+homeassistant_secrets__default: []
+
+# The 1Password vault for every entry that names none. Empty by default:
+# which vault holds the credentials is installation config. Every entry must
+# resolve to a vault one way or the other.
+homeassistant_secrets_vault__default: ''
+
+# GENERATE-DON'T-APPLY. Default reports which keys WOULD be written and
+# writes nothing.
+homeassistant_secrets_apply__default: false
+
+# Non-secret values written into the same managed block, as {key: value}.
+# Account identifiers and usernames belong here rather than in the vault:
+# putting a non-secret behind a vault lookup adds a credential fetch and a
+# two-field item for no confidentiality gain.
+homeassistant_secrets_literal__default: {}

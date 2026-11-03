@@ -1,0 +1,38 @@
+# Offline scenario — exercises the role's REAL diff, template and preflight logic with no Home
+# Assistant and no Zigbee radio. Every HTTP response is a recorded fixture, so this is the only
+# place the role's decision-making can be tested without hardware: a USB Zigbee coordinator is a
+# physical singleton, so there is usually no staging to run against.
+---
+dependency:
+  name: galaxy
+driver:
+  name: default
+platforms:
+  - name: localhost
+provisioner:
+  name: ansible
+  # Molecule runs from the scenario directory, so a project ansible.cfg roles_path does not
+  # resolve. Pointed at the roles directory explicitly so converge.yml can include_role the role
+  # under test — which is what makes this a real test of the role's own code rather than a
+  # re-derivation of its logic in the scenario (MOLMIRROR-01).
+  env:
+    ANSIBLE_ROLES_PATH: "${MOLECULE_PROJECT_DIRECTORY}/../"
+    # BOTH trees: the installed dependencies (collections.galaxy/) and the tree holding this
+    # role's own collection. Molecule does not inherit ansible.cfg, and a dev venv that bundles
+    # the collections in site-packages would hide the omission.
+    ANSIBLE_COLLECTIONS_PATH: "${MOLECULE_PROJECT_DIRECTORY}/../../collections.galaxy:${MOLECULE_PROJECT_DIRECTORY}/../../../../.."
+  inventory:
+    host_vars:
+      localhost:
+        ansible_connection: local
+  playbooks:
+    converge: converge.yml
+    verify: verify.yml
+verifier:
+  name: ansible
+scenario:
+  # No idempotence step: converge deliberately provokes the role's refusals (an unparseable table,
+  # a declaration with no target) and catches them with block/rescue, so a second converge raises
+  # the same errors again — idempotence would read that as a broken ROLE when it is the negative
+  # tests working.
+  test_sequence: [syntax, converge, verify]
