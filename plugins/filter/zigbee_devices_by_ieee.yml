@@ -1,0 +1,26 @@
+# Copyright: (c) 2026, Richard Lynch
+# GNU General Public License v3.0+ (see https://www.gnu.org/licenses/gpl-3.0.txt)
+---
+DOCUMENTATION:
+  name: zigbee_devices_by_ieee
+  short_description: Normalise the IEEE of every device in a ZHA device list
+  author: Richard Lynch (@Richard-Lynch)
+  description:
+    - Returns the device list with each entry's C(ieee) normalised to colon-separated lowercase, so
+      lookups compare like with like.
+    - An entry with no usable C(ieee) is dropped rather than guessed at.
+  options:
+    _input:
+      description: The ZHA device list (mappings carrying C(ieee)).
+      type: list
+      elements: dict
+      required: true
+EXAMPLES: |
+  - name: Index devices by normalised IEEE
+    ansible.builtin.set_fact:
+      devices: "{{ zha_devices | richard_lynch.home.zigbee_devices_by_ieee | items2dict(key_name='ieee', value_name='name') }}"
+RETURN:
+  _value:
+    description: The device entries with a usable IEEE, each with C(ieee) normalised.
+    type: list
+    elements: dict

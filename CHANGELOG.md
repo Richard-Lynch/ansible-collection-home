@@ -9,6 +9,36 @@ All notable changes to this collection are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the collection
 uses [Semantic Versioning](https://semver.org/).
 
+## [1.0.1] — 2026-11-03
+
+### Fixed
+
+- `ha_backup_config` is now a collection module (`richard_lynch.home.ha_backup_config`). It shipped
+  in the `homeassistant_backup` role's own `library/`, which Ansible never loads for a role inside a
+  collection, so the role failed at its first task with "couldn't resolve module/action". The role
+  now calls the module by its fully qualified name.
+- `ha_backup_config` checks every websocket reply's id and success, and fails when the schedule
+  read back after an update still differs from the one requested. `run_now` triggers the backup
+  only after that read-back, so a backup never runs under a schedule that did not apply.
+- `ha_backup_config` in check mode reports a change when `run_now` is set, as a real run does.
+- `ha_backup_config` validates `time` as `HH:MM` (24-hour) before connecting, unless the
+  recurrence is `never`.
+- Every role carries a `meta/main.yml` with a Galaxy description.
+- Every filter in `plugins/filter/` has `ansible-doc` documentation (one sidecar `.yml` per
+  filter name), so the Galaxy import reports no documentation error.
+
+### Added
+
+- Module documentation for `ha_backup_config` (options, examples, return values, check-mode
+  support), and unit tests that run it against a fake Home Assistant websocket.
+
+### Changed
+
+- The `homeassistant_backup` molecule scenario runs the real role and module (an empty token, an
+  unknown recurrence, a malformed time, an unreachable host) instead of re-deriving the module's
+  schedule comparison.
+- CI, disclose and release callers use ansible-devkit v0.2.3.
+
 ## [1.0.0] — 2026-11-03
 
 ### Added

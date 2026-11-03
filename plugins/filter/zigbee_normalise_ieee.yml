@@ -1,0 +1,24 @@
+# Copyright: (c) 2026, Richard Lynch
+# GNU General Public License v3.0+ (see https://www.gnu.org/licenses/gpl-3.0.txt)
+---
+DOCUMENTATION:
+  name: zigbee_normalise_ieee
+  short_description: Normalise a Zigbee IEEE address to colon-separated lowercase
+  author: Richard Lynch (@Richard-Lynch)
+  description:
+    - Accepts the IEEE spellings Zigbee tools use (C(0x0011223344556677), C(00:11:22:33:44:55:66:77),
+      any case) and returns colon-separated lowercase.
+    - A value that is not an IEEE address raises.
+  options:
+    _input:
+      description: The IEEE address.
+      type: str
+      required: true
+EXAMPLES: |
+  - name: Compare two IEEE spellings
+    ansible.builtin.assert:
+      that: "('0x0011223344556677' | richard_lynch.home.zigbee_normalise_ieee) == '00:11:22:33:44:55:66:77'"
+RETURN:
+  _value:
+    description: The IEEE address, colon-separated lowercase.
+    type: str

@@ -30,7 +30,7 @@ or pin it in `requirements.yml`:
 ```yaml
 collections:
   - name: richard_lynch.home
-    version: "1.0.0"
+    version: "1.0.1"
 ```
 
 Requires ansible-core >=2.19.0.
@@ -48,7 +48,7 @@ devkit check all                # the static checks, configured by devkit.toml
 
 CI, the disclosure gate and releases are the shared workflows of
 [ansible-devkit](https://github.com/Richard-Lynch/ansible-devkit), called from
-`.github/workflows/` at tag `v0.2.1`. A release is a merged pull
+`.github/workflows/` at tag `v0.2.3`. A release is a merged pull
 request that bumps `version` in `galaxy.yml` and adds the matching
 `CHANGELOG.md` section. `export.manifest` lists every tracked path; update it in
 the same commit as any file added or removed.

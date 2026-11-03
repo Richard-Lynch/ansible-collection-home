@@ -1,0 +1,30 @@
+# Copyright: (c) 2026, Richard Lynch
+# GNU General Public License v3.0+ (see https://www.gnu.org/licenses/gpl-3.0.txt)
+---
+DOCUMENTATION:
+  name: zigbee_declaration_stanza
+  short_description: Turn a normalised Zigbee binding into a declaration entry
+  author: Richard Lynch (@Richard-Lynch)
+  description:
+    - Converts one normalised binding into a declaration entry (C(from), C(from_endpoint), C(to)/C(to_endpoint)
+      or C(to_group), C(clusters)) that P(richard_lynch.home.zigbee_parse_declared#filter) accepts,
+      so a live table can be pasted into a declaration without retyping IEEE addresses.
+    - One cluster per entry.
+  options:
+    _input:
+      description: One normalised binding.
+      type: dict
+      required: true
+    name:
+      description: A C(name) for the entry; omitted when empty.
+      type: str
+      default: ''
+EXAMPLES: |
+  - name: Print the live bindings as declarations
+    ansible.builtin.debug:
+      msg: "{{ item | richard_lynch.home.zigbee_declaration_stanza('from probe') }}"
+    loop: "{{ binds_get_result | richard_lynch.home.zigbee_parse_live }}"
+RETURN:
+  _value:
+    description: A declaration entry.
+    type: dict

@@ -1,8 +1,8 @@
 ---
-# homeassistant_backup — set Home Assistant's native automatic-backup schedule. HA runs as HAOS (a
-# locked appliance), so its config is API-only, and the backup SCHEDULE is settable ONLY over the
+# homeassistant_backup — set Home Assistant's native automatic-backup schedule. Home Assistant OS is
+# a locked appliance, so its config is API-only, and the backup SCHEDULE is settable ONLY over the
 # websocket API (backup/config/update) — the REST API cannot do it. This role runs from localhost and
-# uses the ha_backup_config module (websocket) to set the schedule idempotently.
+# uses the richard_lynch.home.ha_backup_config module (websocket) to set the schedule idempotently.
 #
 # homeassistant_backup_base_url and homeassistant_backup_token are REQUIRED and have no default: they
 # are installation config (an address and a credential), set by the caller.

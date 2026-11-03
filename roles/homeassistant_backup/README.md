@@ -7,11 +7,13 @@ protects the device pairings (Zigbee/Matter/HomeKit) that no configuration file 
 
 ## Why websocket (not REST)
 
-HA runs as **HAOS — a locked appliance** — so config is API-driven. The backup schedule and
+Home Assistant OS is **a locked appliance**, so its config is API-driven. The backup schedule and
 retention are settable **only over the websocket API** (`backup/config/update`); the REST API has
 no service for it (`backup.create` does not exist — the only service is `backup.create_automatic`,
 which itself relies on the websocket-configured schedule). So this role runs from `localhost` and
-uses the bundled **`ha_backup_config`** module (websocket) to set the schedule idempotently.
+uses the collection's **`richard_lynch.home.ha_backup_config`** module (websocket) to set the schedule
+idempotently. It is a collection module, not a role-local `library/` file: a role inside a
+collection never loads its own `library/`.
 
 Requires the `websocket-client` Python package on the controller.
 
@@ -53,6 +55,9 @@ See [`meta/argument_specs.yml`](meta/argument_specs.yml):
 
 ## Testing
 
-`molecule/default/` exercises the schedule-diff decision offline (a matching schedule is not
-re-applied; a differing one is) and checks the module parses. The live websocket path needs a real
-appliance.
+`molecule/default/` runs the real role, and through it the real module, against an address with no
+listener: an empty token is refused before any connection, an unknown recurrence is rejected by the
+module's own argument spec, and an unreachable Home Assistant fails on the connection — never on
+resolving the module. The websocket conversation itself (schedule diff, update, read-back, check
+mode, `run_now`, authentication) is covered by the module's unit tests
+(`tests/unit/test_ha_backup_config.py`), against a fake socket that answers like Home Assistant.

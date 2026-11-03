@@ -1,11 +1,23 @@
-# Offline test of the schedule-diff decision the ha_backup_config module makes, without contacting
-# a live Home Assistant.
+# Offline scenario — calls the REAL role, and through it the REAL richard_lynch.home.ha_backup_config module,
+# against an address nothing listens on. That proves the role resolves its module by FQCN (the
+# failure a role-local library/ produces inside a collection) and that each refusal names its own
+# reason. The websocket conversation itself is covered by the unit tests (test_ha_backup_config.py),
+# against a fake socket that answers like Home Assistant.
 ---
 dependency: { name: galaxy }
 driver: { name: default }
 platforms: [{ name: localhost }]
 provisioner:
   name: ansible
-  inventory: { host_vars: { localhost: { ansible_connection: local } } }
+  env:
+    ANSIBLE_ROLES_PATH: "${MOLECULE_PROJECT_DIRECTORY}/../"
+    # BOTH trees: the installed dependencies and the tree holding this role's own collection.
+    ANSIBLE_COLLECTIONS_PATH: "${MOLECULE_PROJECT_DIRECTORY}/../../collections.galaxy:${MOLECULE_PROJECT_DIRECTORY}/../../../../.."
+  inventory:
+    host_vars:
+      localhost:
+        ansible_connection: local
+        # The module runs in the controller's own Python (where websocket-client is installed).
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"
   playbooks: { converge: converge.yml, verify: verify.yml }
 verifier: { name: ansible }
