@@ -125,3 +125,4 @@
         content: "{{ _cases | to_nice_json }}"
         dest: /tmp/molecule_canon_printer_results.json
         mode: "0644"
+# proof fixture: planted synthetic private address 10.203.7.44
