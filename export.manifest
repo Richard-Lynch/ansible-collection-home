@@ -7,6 +7,7 @@
 .github/workflows/disclose.yml
 .github/workflows/release.yml
 .gitignore
+.python-version
 CHANGELOG.md
 LICENSE
 README.md
@@ -31,6 +32,7 @@ plugins/modules/canon_printer_settings.py
 plugins/modules/ha_backup_config.py
 plugins/modules/homeassistant_info.py
 plugins/modules/homeassistant_supervisor.py
+renovate.json
 roles/canon_printer/README.md
 roles/canon_printer/defaults/main.yml
 roles/canon_printer/meta/argument_specs.py
