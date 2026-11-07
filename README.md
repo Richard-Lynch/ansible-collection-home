@@ -56,3 +56,8 @@ the same commit as any file added or removed.
 ## Licence
 
 GPL-3.0-or-later. See [LICENSE](LICENSE).
+
+## module_utils
+
+`homeassistant` (REST client behind `homeassistant_info`), `canon_rui` (Canon printer RUI client) and
+`ha_websocket` (an authenticated Home Assistant WebSocket client for the registry, zones and helpers).
