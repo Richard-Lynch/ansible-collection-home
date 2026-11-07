@@ -9,6 +9,17 @@ All notable changes to this collection are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the collection
 uses [Semantic Versioning](https://semver.org/).
 
+## [1.1.0] — 2026-11-07
+
+### Added
+
+- **`module_utils/ha_websocket.py`** — a minimal authenticated Home Assistant WebSocket client
+  (`HomeAssistantWS` as a context manager, `ws_url`, `token_from_stdin`), for the parts of HA that
+  are reachable only over the WebSocket API (the entity registry, zones and helpers). Every
+  handshake step is checked, commands are correlated by id through interleaved event frames, and
+  the token is read from stdin, never argv. Moved from the IaaC hub's Home Assistant maintenance
+  scripts (M6 batch 5), which import it from here; unit tests against a scripted fake socket.
+
 ## [1.0.1] — 2026-11-03
 
 ### Fixed
