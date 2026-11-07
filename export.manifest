@@ -10,6 +10,7 @@
 .python-version
 CHANGELOG.md
 LICENSE
+Makefile
 README.md
 configured_roles.txt
 devkit.toml
@@ -34,6 +35,7 @@ plugins/modules/ha_backup_config.py
 plugins/modules/homeassistant_info.py
 plugins/modules/homeassistant_supervisor.py
 renovate.json
+requirements.yml
 roles/canon_printer/README.md
 roles/canon_printer/defaults/main.yml
 roles/canon_printer/meta/argument_specs.py
