@@ -26,6 +26,7 @@ plugins/filter/zigbee_normalise_ieee.yml
 plugins/filter/zigbee_parse_declared.yml
 plugins/filter/zigbee_parse_live.yml
 plugins/module_utils/canon_rui.py
+plugins/module_utils/ha_websocket.py
 plugins/module_utils/homeassistant.py
 plugins/modules/canon_printer_maintenance.py
 plugins/modules/canon_printer_settings.py
@@ -121,4 +122,5 @@ roles/homeassistant_update/tasks/_resolve_defaults.yml
 roles/homeassistant_update/tasks/main.yml
 tests/unit/test_canon_rui.py
 tests/unit/test_ha_backup_config.py
+tests/unit/test_ha_websocket.py
 tests/unit/test_homeassistant.py
